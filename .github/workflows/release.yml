@@ -48,6 +48,8 @@ jobs:
         with:
           path: dmg
           merge-multiple: true
+      - name: Контрольные суммы (для проверки обновлений в приложении)
+        run: cd dmg && shasum -a 256 *.dmg > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Заметки к выпуску из CHANGELOG.md
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -63,8 +65,9 @@ jobs:
           - `*-macos-arm64.dmg` — Mac на Apple Silicon, `*-macos-x86_64.dmg` — Mac на Intel.
           - Сборка не подписана сертификатом Apple Developer: при первом запуске откройте
             приложение через правый клик → «Открыть».
+          - Начиная с 0.2.0 обновление ставится из приложения: «Справка → Проверить обновления».
           NOTES
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dmg/*.dmg --title "Калькулятор ВЭД $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dmg/*.dmg dmg/SHA256SUMS.txt --title "Калькулятор ВЭД $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

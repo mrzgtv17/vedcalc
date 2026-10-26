@@ -21,6 +21,7 @@ from vedcalc.core.validation import InputError
 from vedcalc.gui.calculator import CalculatorTab
 from vedcalc.gui.form import new_shipment
 from vedcalc.gui.theme import apply_theme
+from vedcalc.gui.updates import UpdateController
 from vedcalc.modules.registry import ModuleSpec, modules
 
 FILE_FILTER = "Расчёт ВЭД (*.vedcalc.json *.json)"
@@ -34,11 +35,13 @@ class MainWindow(QMainWindow):
         *,
         threaded: bool = True,
         extra_modules: list[ModuleSpec] | None = None,
+        check_updates: bool = False,
     ):
         super().__init__()
         apply_theme(QApplication.instance())
         self.path: Path | None = None
         self.dirty = False
+        self.updates = UpdateController(self, threaded=threaded)
 
         self.calculator = CalculatorTab(provider, threaded=threaded)
         self.calculator.modified.connect(self._mark_dirty)
@@ -57,6 +60,8 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self._update_title()
         self._update_actions()
+        if check_updates:
+            self.updates.schedule_startup_check()
 
     # --- меню -------------------------------------------------------------------------
 
@@ -85,6 +90,7 @@ class MainWindow(QMainWindow):
         m.addAction(self._action("Выход", self.close, QKeySequence.StandardKey.Quit))
 
         h = self.menuBar().addMenu("Справка")
+        h.addAction(self._action("Проверить обновления…", lambda: self.updates.check(manual=True)))
         h.addAction(self._action("О программе", self.about))
 
     def _update_actions(self) -> None:

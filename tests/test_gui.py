@@ -228,3 +228,63 @@ def test_offline_without_cache_suggests_manual_rate(qtbot, monkeypatch):
     form.manual_edits["CNY"].setText("12,5")
     w.calculator.recalc()
     assert w.calculator.report.cost.items[0].goods == D("12500.00")
+
+
+def test_update_check_offers_new_version(qtbot, monkeypatch, tmp_path):
+    import json
+
+    from PySide6.QtCore import QSettings
+
+    from vedcalc import updater
+    from vedcalc.gui import updates
+
+    data = {
+        "tag_name": "v9.9.9",
+        "body": "Новое",
+        "html_url": "https://example.test",
+        "assets": [
+            {
+                "name": f"vedcalc-9.9.9-macos-{updater.machine_arch()}.dmg",
+                "size": 1,
+                "browser_download_url": "https://example.test/a.dmg",
+                "digest": "sha256:" + "0" * 64,
+            }
+        ],
+    }
+    w = MainWindow(TEST_RATES, threaded=False, extra_modules=[])
+    qtbot.addWidget(w)
+    w.updates.fetch = lambda url: json.dumps(data).encode()
+    w.updates.settings = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    shown = {}
+
+    def fake_exec(dialog):
+        shown["install_enabled"] = dialog.install.isEnabled()
+        dialog.choice = updates.UpdateDialog.SKIP
+        return 0
+
+    monkeypatch.setattr(updates.UpdateDialog, "exec", fake_exec)
+    w.updates.check(manual=True)
+    # Из исходников установка недоступна — только «скачать вручную»
+    assert shown == {"install_enabled": False}
+    assert w.updates.settings.value(updates.SETTINGS_SKIPPED) == "9.9.9"
+    # Пропущенная версия при автоматической проверке больше не предлагается
+    shown.clear()
+    w.updates.check(manual=False)
+    assert shown == {}
+
+
+def test_update_check_reports_latest(qtbot, monkeypatch, tmp_path):
+    import json
+
+    from PySide6.QtCore import QSettings
+
+    from vedcalc import __version__
+
+    w = MainWindow(TEST_RATES, threaded=False, extra_modules=[])
+    qtbot.addWidget(w)
+    w.updates.fetch = lambda url: json.dumps({"tag_name": f"v{__version__}"}).encode()
+    w.updates.settings = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: messages.append(a[2]))
+    w.updates.check(manual=True)
+    assert messages == [f"У вас последняя версия — {__version__}."]

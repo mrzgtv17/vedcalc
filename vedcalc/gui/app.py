@@ -36,10 +36,14 @@ def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_TITLE)
     app.setOrganizationName("vedcalc")
-    window = MainWindow(CbrRateProvider())
+    smoke = os.environ.get(SMOKE_ENV)
+    window = MainWindow(
+        CbrRateProvider(),
+        check_updates=not smoke and not os.environ.get("VEDCALC_NO_UPDATE_CHECK"),
+    )
     window.show()
-    if png := os.environ.get(SMOKE_ENV):
-        _smoke_test(window, app, png)
+    if smoke:
+        _smoke_test(window, app, smoke)
     return app.exec()
 
 
