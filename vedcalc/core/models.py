@@ -123,16 +123,18 @@ class CostLine:
 class PriceMode(StrEnum):
     MARKUP = "markup"  # наценка k, % к себестоимости
     MARGIN = "margin"  # маржинальность m, % от цены
-    NET_PROFIT = "net_profit"  # целевая чистая прибыль N, руб.
-    PRICE = "price"  # обратный расчёт: цена без НДС задана
+    NET_PROFIT = "net_profit"  # целевая чистая прибыль N на партию, руб.
+    UNIT_PRICE = "unit_price"  # обратный расчёт: цена за единицу без НДС (одна позиция)
+    PRICE = "price"  # обратный расчёт: цена партии без НДС
 
     @property
     def label(self) -> str:
         return {
             PriceMode.MARKUP: "Наценка, %",
             PriceMode.MARGIN: "Маржинальность, %",
-            PriceMode.NET_PROFIT: "Чистая прибыль, руб.",
-            PriceMode.PRICE: "Цена без НДС, руб.",
+            PriceMode.NET_PROFIT: "Чистая прибыль на партию, руб.",
+            PriceMode.UNIT_PRICE: "Цена за единицу без НДС, руб.",
+            PriceMode.PRICE: "Цена партии без НДС, руб.",
         }[self]
 
 

@@ -17,8 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from vedcalc.core.report import Row
-
-ERROR_STYLE = "border: 1px solid #d70015; background-color: #fff0f0; color: #1d1d1f;"
+from vedcalc.gui.theme import FIELD_ERROR
 
 
 def parse_decimal(text: str) -> Decimal:
@@ -50,7 +49,7 @@ def mark_error(widget: QWidget, message: str | None) -> None:
     if base is None:
         base = widget.toolTip()
         widget.setProperty("baseToolTip", base)
-    widget.setStyleSheet(ERROR_STYLE if message else "")
+    widget.setStyleSheet(FIELD_ERROR if message else "")
     widget.setToolTip(message or base)
 
 

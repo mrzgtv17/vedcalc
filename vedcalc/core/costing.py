@@ -53,6 +53,10 @@ class ItemCost:
     def cost_gross(self) -> Decimal:
         return self.cost_net + self.deductible_vat
 
+    def per_unit(self, value: Decimal) -> Decimal:
+        """Сумма позиции → на 1 единицу (шт, кг или т — как задано в позиции)."""
+        return value / self.quantity
+
     @property
     def unit_cost_net(self) -> Decimal:
         return self.cost_net / self.quantity

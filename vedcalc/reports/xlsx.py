@@ -37,12 +37,69 @@ def _write_rows(ws: Worksheet, start: int, title: str, rows: tuple[Row, ...]) ->
     return r + 1
 
 
+def _write_unit_sheet(ws: Worksheet, report: Report) -> None:
+    """Первый лист — расчёт на 1 шт / кг / т по каждой позиции."""
+    s = report.shipment
+    ws.cell(1, 1, s.name).font = TITLE
+    ws.cell(2, 1, f"Дата расчёта {s.calc_date:%d.%m.%Y} · {report.cost.tax_regime.label}")
+    r = 4
+    for w in report.cost.warnings:
+        ws.cell(r, 1, f"⚠ {w}").font = Font(color="9C4A00")
+        r += 1
+    r += 1 if report.cost.warnings else 0
+    for view in report.unit_views():
+        ws.cell(r, 1, f"{view.name} — {view.per}").font = SECTION
+        r += 1
+        for c, h in enumerate(("Себестоимость", "Сумма, руб.", "Формула"), 1):
+            cell = ws.cell(r, c, h)
+            cell.font = BOLD
+            cell.fill = HEADER_FILL
+        r += 1
+        for line in view.cost_lines:
+            ws.cell(r, 1, line.label)
+            value = ws.cell(r, 2, line.value)
+            value.number_format = MONEY
+            ws.cell(r, 3, line.formula).font = Font(color="76746D")
+            if line.strong:
+                ws.cell(r, 1).font = BOLD
+                value.font = BOLD
+            r += 1
+        r += 1
+        columns = [("Безубыточная", view.break_even)]
+        if view.target is not None:
+            columns.append((report.target_title, view.target))
+        heads = ["Цена и прибыль " + view.per] + [title for title, _ in columns]
+        for c, h in enumerate(heads, 1):
+            cell = ws.cell(r, c, h)
+            cell.font = BOLD
+            cell.fill = HEADER_FILL
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+        r += 1
+        for line in view.break_even.lines:
+            ws.cell(r, 1, line.label).font = BOLD if line.strong else Font()
+            for c, (_, price) in enumerate(columns, 2):
+                match = {x.label: x for x in price.lines}.get(line.label)
+                if match is not None:
+                    cell = ws.cell(r, c, match.value)
+                    cell.number_format = MONEY
+                    if match.strong:
+                        cell.font = BOLD
+            r += 1
+        r += 2
+    ws.column_dimensions["A"].width = 40
+    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["C"].width = 62
+    ws.column_dimensions["D"].width = 22
+
+
 def write_xlsx(report: Report, path: Path) -> None:
     wb = Workbook()
     s = report.shipment
 
-    ws = wb.active
-    ws.title = "Итоги"
+    _write_unit_sheet(wb.active, report)
+    wb.active.title = "За единицу"
+
+    ws = wb.create_sheet("Итоги")
     ws.cell(1, 1, s.name).font = TITLE
     ws.cell(
         2,
@@ -55,7 +112,12 @@ def write_xlsx(report: Report, path: Path) -> None:
         ws.cell(r, 1, f"⚠ {w}").font = Font(color="9C4A00")
         r += 1
     r += 1 if report.cost.warnings else 0
-    for section in (report.cost_section(), report.break_even_section(), report.target_section()):
+    for section in (
+        report.batch_section(),
+        report.cost_section(),
+        report.break_even_section(),
+        report.target_section(),
+    ):
         r = _write_rows(ws, r, section.title, section.rows)
     r = _write_rows(ws, r, "Курсы и методика", report.rates_rows() + report.method_rows())
     ws.column_dimensions["A"].width = 42

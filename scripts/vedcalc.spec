@@ -9,7 +9,10 @@ VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "vedcalc" / "__init__.py
 a = Analysis(
     [str(ROOT / "scripts" / "launch.py")],
     pathex=[str(ROOT)],
-    datas=[(str(ROOT / "vedcalc" / "data" / "*.json"), "vedcalc/data")],
+    datas=[
+        (str(ROOT / "vedcalc" / "data" / "*.json"), "vedcalc/data"),
+        (str(ROOT / "vedcalc" / "gui" / "assets" / "*.svg"), "vedcalc/gui/assets"),
+    ],
     hiddenimports=["openpyxl", "certifi"],
     excludes=["tkinter", "pytest", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick"],
     noarchive=False,

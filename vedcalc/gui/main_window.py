@@ -6,7 +6,7 @@ from importlib import resources
 from pathlib import Path
 
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
 from vedcalc import __version__
 from vedcalc.core.fx import RateProvider
@@ -20,6 +20,7 @@ from vedcalc.core.io import (
 from vedcalc.core.validation import InputError
 from vedcalc.gui.calculator import CalculatorTab
 from vedcalc.gui.form import new_shipment
+from vedcalc.gui.theme import apply_theme
 from vedcalc.modules.registry import ModuleSpec, modules
 
 FILE_FILTER = "Расчёт ВЭД (*.vedcalc.json *.json)"
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         extra_modules: list[ModuleSpec] | None = None,
     ):
         super().__init__()
+        apply_theme(QApplication.instance())
         self.path: Path | None = None
         self.dirty = False
 
