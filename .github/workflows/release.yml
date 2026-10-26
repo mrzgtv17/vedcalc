@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon → arm64
+          - runner: macos-15-intel  # Intel → x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[gui,dev]"
+      - name: Тесты
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest
+      - name: Версия в теге совпадает с версией пакета
+        run: |
+          VERSION="$(python -c 'import vedcalc; print(vedcalc.__version__)')"
+          test "v${VERSION}" = "${GITHUB_REF_NAME}" || { echo "Тег ${GITHUB_REF_NAME} ≠ v${VERSION}"; exit 1; }
+      - name: Сборка .app и .dmg
+        run: scripts/build_macos.sh python
+      - name: Запуск собранного приложения (контрольный пример)
+        run: VEDCALC_SMOKE_TEST="$RUNNER_TEMP/smoke.png" "dist/Калькулятор ВЭД.app/Contents/MacOS/vedcalc"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.runner }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dmg
+          merge-multiple: true
+      - name: Заметки к выпуску из CHANGELOG.md
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {found=1; next}
+            found && /^## \[/ {exit}
+            found && /^\[.*\]: / {exit}
+            found {print}
+          ' CHANGELOG.md > notes.md
+          cat >> notes.md <<'NOTES'
+
+          ### Установка
+          - `*-macos-arm64.dmg` — Mac на Apple Silicon, `*-macos-x86_64.dmg` — Mac на Intel.
+          - Сборка не подписана сертификатом Apple Developer: при первом запуске откройте
+            приложение через правый клик → «Открыть».
+          NOTES
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dmg/*.dmg --title "Калькулятор ВЭД $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

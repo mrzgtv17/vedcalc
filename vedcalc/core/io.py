@@ -1,0 +1,187 @@
+"""Сохранение и открытие расчёта (JSON). Decimal хранится строкой — без потерь."""
+
+from __future__ import annotations
+
+import copy
+import json
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from vedcalc.core.models import (
+    AllocationMethod,
+    CostKind,
+    CostLine,
+    DeliveryMode,
+    DutyKind,
+    DutyRate,
+    Item,
+    PriceMode,
+    SaleParams,
+    Shipment,
+    TaxRegime,
+)
+from vedcalc.core.money import Money
+from vedcalc.core.units import Unit
+
+FORMAT = "vedcalc.shipment"
+VERSION = 1
+
+
+class FileFormatError(ValueError):
+    pass
+
+
+def _money(m: Money) -> dict[str, str]:
+    return {"amount": str(m.amount), "currency": m.currency}
+
+
+def _opt(d: Decimal | None) -> str | None:
+    return None if d is None else str(d)
+
+
+def _dec_opt(s: str | None) -> Decimal | None:
+    return None if s is None else Decimal(s)
+
+
+def shipment_to_dict(s: Shipment) -> dict[str, Any]:
+    return {
+        "format": FORMAT,
+        "version": VERSION,
+        "shipment": {
+            "name": s.name,
+            "calc_date": s.calc_date.isoformat(),
+            "delivery_mode": s.delivery_mode.value,
+            "tax_regime": s.tax_regime.value,
+            "allocation": s.allocation.value,
+            "items": [
+                {
+                    "name": i.name,
+                    "tnved_code": i.tnved_code,
+                    "unit_price": _money(i.unit_price),
+                    "quantity": str(i.quantity),
+                    "unit": i.unit.value,
+                    "duty": {
+                        "kind": i.duty.kind.value,
+                        "percent": str(i.duty.percent),
+                        "specific": _money(i.duty.specific) if i.duty.specific else None,
+                        "specific_unit": i.duty.specific_unit.value
+                        if i.duty.specific_unit
+                        else None,
+                    },
+                    "vat_rate": str(i.vat_rate),
+                    "excise": _money(i.excise),
+                    "gross_weight_kg": _opt(i.gross_weight_kg),
+                    "net_weight_kg": _opt(i.net_weight_kg),
+                    "volume_m3": _opt(i.volume_m3),
+                }
+                for i in s.items
+            ],
+            "costs": [
+                {
+                    "name": c.name,
+                    "kind": c.kind.value,
+                    "amount": _money(c.amount),
+                    "in_customs_value": c.in_customs_value,
+                    "vat_included": c.vat_included,
+                    "vat_rate": str(c.vat_rate),
+                }
+                for c in s.costs
+            ],
+            "manual_rates": {k: str(v) for k, v in s.manual_rates.items()},
+            "sale": {
+                "vat_rate": str(s.sale.vat_rate),
+                "profit_tax_rate": str(s.sale.profit_tax_rate),
+                "price_dependent_rate": str(s.sale.price_dependent_rate),
+                "target_mode": s.sale.target_mode.value,
+                "target_value": str(s.sale.target_value),
+            },
+        },
+    }
+
+
+def _load_money(d: dict) -> Money:
+    return Money(Decimal(d["amount"]), d["currency"])
+
+
+def shipment_from_dict(data: dict[str, Any]) -> Shipment:
+    if data.get("format") != FORMAT:
+        raise FileFormatError("Это не файл расчёта «Калькулятора ВЭД»")
+    if data.get("version", 0) > VERSION:
+        raise FileFormatError("Файл создан более новой версией программы — обновите её")
+    try:
+        s = data["shipment"]
+        items = []
+        for i in s["items"]:
+            d = i["duty"]
+            items.append(
+                Item(
+                    name=i["name"],
+                    tnved_code=i.get("tnved_code"),
+                    unit_price=_load_money(i["unit_price"]),
+                    quantity=Decimal(i["quantity"]),
+                    unit=Unit(i["unit"]),
+                    duty=DutyRate(
+                        kind=DutyKind(d["kind"]),
+                        percent=Decimal(d["percent"]),
+                        specific=_load_money(d["specific"]) if d.get("specific") else None,
+                        specific_unit=Unit(d["specific_unit"]) if d.get("specific_unit") else None,
+                    ),
+                    vat_rate=Decimal(i["vat_rate"]),
+                    excise=_load_money(i["excise"]),
+                    gross_weight_kg=_dec_opt(i.get("gross_weight_kg")),
+                    net_weight_kg=_dec_opt(i.get("net_weight_kg")),
+                    volume_m3=_dec_opt(i.get("volume_m3")),
+                )
+            )
+        costs = [
+            CostLine(
+                name=c["name"],
+                kind=CostKind(c["kind"]),
+                amount=_load_money(c["amount"]),
+                in_customs_value=bool(c["in_customs_value"]),
+                vat_included=bool(c["vat_included"]),
+                vat_rate=Decimal(c["vat_rate"]),
+            )
+            for c in s["costs"]
+        ]
+        sale = s["sale"]
+        return Shipment(
+            name=s["name"],
+            calc_date=date.fromisoformat(s["calc_date"]),
+            delivery_mode=DeliveryMode(s["delivery_mode"]),
+            tax_regime=TaxRegime(s["tax_regime"]),
+            allocation=AllocationMethod(s["allocation"]),
+            items=items,
+            costs=costs,
+            manual_rates={k: Decimal(v) for k, v in s.get("manual_rates", {}).items()},
+            sale=SaleParams(
+                vat_rate=Decimal(sale["vat_rate"]),
+                profit_tax_rate=Decimal(sale["profit_tax_rate"]),
+                price_dependent_rate=Decimal(sale["price_dependent_rate"]),
+                target_mode=PriceMode(sale.get("target_mode", PriceMode.MARKUP)),
+                target_value=Decimal(sale.get("target_value", "20")),
+            ),
+        )
+    except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+        raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc
+
+
+def save_shipment(shipment: Shipment, path: Path) -> None:
+    text = json.dumps(shipment_to_dict(shipment), ensure_ascii=False, indent=2)
+    path.write_text(text + "\n", encoding="utf-8")
+
+
+def load_shipment(path: Path) -> Shipment:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise FileFormatError(f"Файл не является JSON: {exc}") from exc
+    return shipment_from_dict(data)
+
+
+def duplicate_shipment(shipment: Shipment, suffix: str = " (копия)") -> Shipment:
+    copy_ = copy.deepcopy(shipment)
+    copy_.name = shipment.name + suffix
+    return copy_

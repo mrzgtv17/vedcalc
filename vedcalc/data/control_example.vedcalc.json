@@ -1,0 +1,69 @@
+{
+  "format": "vedcalc.shipment",
+  "version": 1,
+  "shipment": {
+    "name": "Контрольный пример",
+    "calc_date": "2026-03-10",
+    "delivery_mode": "40DC",
+    "tax_regime": "osn",
+    "allocation": "by_value",
+    "items": [
+      {
+        "name": "Товар",
+        "tnved_code": null,
+        "unit_price": {
+          "amount": "100000",
+          "currency": "RUB"
+        },
+        "quantity": "1",
+        "unit": "pcs",
+        "duty": {
+          "kind": "ad_valorem",
+          "percent": "5",
+          "specific": null,
+          "specific_unit": null
+        },
+        "vat_rate": "22",
+        "excise": {
+          "amount": "0",
+          "currency": "RUB"
+        },
+        "gross_weight_kg": null,
+        "net_weight_kg": null,
+        "volume_m3": null
+      }
+    ],
+    "costs": [
+      {
+        "name": "Доставка до границы",
+        "kind": "delivery_to_border",
+        "amount": {
+          "amount": "30000",
+          "currency": "RUB"
+        },
+        "in_customs_value": true,
+        "vat_included": false,
+        "vat_rate": "0"
+      },
+      {
+        "name": "Доставка по РФ",
+        "kind": "delivery_rf",
+        "amount": {
+          "amount": "10000",
+          "currency": "RUB"
+        },
+        "in_customs_value": false,
+        "vat_included": false,
+        "vat_rate": "0"
+      }
+    ],
+    "manual_rates": {},
+    "sale": {
+      "vat_rate": "22",
+      "profit_tax_rate": "25",
+      "price_dependent_rate": "0",
+      "target_mode": "price",
+      "target_value": "200000"
+    }
+  }
+}

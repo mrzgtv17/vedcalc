@@ -1,0 +1,21 @@
+{
+  "id": "customs_fees_2026",
+  "title": "Таможенные сборы за выпуск товаров при ввозе",
+  "valid_from": "2026-01-01",
+  "valid_to": null,
+  "legal_basis": "ПП РФ от 28.11.2024 № 1637 в ред. ПП РФ от 23.10.2025 № 1638, п. 1",
+  "source_url": "https://customs.gov.ru/fiz/uplata-tamozhennyx-platezhej/stavki-tamozhennyx-sborov-za-sovershenie-tamozhennyx-operaczij,-svyazannyx-s-vypuskom-tovarov-dlya-lichnogo-pol-zovaniya",
+  "verified_on": "2026-10-26",
+  "note": "Порог — общая таможенная стоимость товаров по ДТ, включительно. Особые ставки (радиоэлектроника по прил. № 1 — 73 860 руб.) не поддерживаются.",
+  "currency": "RUB",
+  "brackets": [
+    {"up_to": "200000.00", "fee": "1231"},
+    {"up_to": "450000.00", "fee": "2462"},
+    {"up_to": "1200000.00", "fee": "4924"},
+    {"up_to": "2700000.00", "fee": "13541"},
+    {"up_to": "4200000.00", "fee": "18465"},
+    {"up_to": "5500000.00", "fee": "21344"},
+    {"up_to": "10000000.00", "fee": "49240"},
+    {"up_to": null, "fee": "73860"}
+  ]
+}
