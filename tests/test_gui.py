@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from vedcalc.core.fx import FxError
 from vedcalc.core.models import PriceMode, TaxRegime
+from vedcalc.core.units import Unit
 from vedcalc.gui.main_window import MainWindow
 
 NBSP = " "
@@ -54,19 +55,46 @@ def test_new_calculation_shows_hints_not_errors(window):
 
 def test_control_example_on_screen(example):
     r = results(example)
-    assert r.cost_view.value_text("Таможенная стоимость") == money("130 000,00")
-    assert r.cost_view.value_text("Таможенный сбор") == money("1 231,00")
-    assert r.cost_view.value_text("Ввозная таможенная пошлина") == money("6 500,00")
-    assert r.cost_view.value_text("НДС при ввозе") == money("30 030,00")
-    assert r.cost_view.value_text("Себестоимость партии без НДС") == money("147 731,00")
-    assert r.break_even_view.value_text("Цена с НДС") == money("180 231,82")
-    assert r.break_even_view.value_text("НДС-разрыв при P = C") == money("2 470,82")
-    # В файле примера сохранён сценарий «продажа за 200 000»
-    assert r.target_view.value_text("Чистая прибыль") == money("39 201,75")
-    assert r.target_view.value_text("Наценка") == "35,38%"
-    assert r.target_view.value_text("Маржинальность") == "26,13%"
-    assert "Детализация расчёта" in r.details.toPlainText()
+    (card,) = r.unit_cards
+    # Главное — экономика единицы товара
+    assert card.view.per == "за 1 шт"
+    assert card.metric_text("cost") == money("147 731,00")
+    assert card.metric_text("break_even") == money("147 731,00")
+    assert card.metric_text("target") == money("200 000,00")
+    assert card.line_text("Таможенная стоимость") == money("130 000,00")
+    assert card.line_text("Таможенный сбор") == money("1 231,00")
+    assert card.line_text("Ввозная пошлина") == money("6 500,00")
+    assert card.line_text("НДС при ввозе") == money("30 030,00")
+    assert card.price_text("Безубыточная", "Цена с НДС") == money("180 231,82")
+    # В файле примера сохранён сценарий «продажа партии за 200 000»
+    assert card.price_text("По сценарию", "Чистая прибыль") == money("39 201,75")
+    assert "35,38%" in r.target_summary.text() and "26,13%" in r.target_summary.text()
+    # Итоги партии — ниже
+    assert r.batch_view.value_text("Себестоимость партии без НДС") == money("147 731,00")
+    assert r.batch_view.value_text("НДС-разрыв при P = C") == money("2 470,82")
+    assert "Себестоимость за 1 шт" in r.details.toPlainText()
+    assert "Расчёт по партии" in r.details.toPlainText()
     assert example.pdf_action.isEnabled()
+
+
+def test_unit_cards_follow_quantity_and_unit(example):
+    row(example, "quantity").setText("4")
+    row(example, "unit").set_value(Unit.KG)
+    example.calculator.recalc()
+    (card,) = results(example).unit_cards
+    assert card.view.per == "за 1 кг"
+    assert card.line_text("Таможенный сбор") == money("615,50")  # 2 462 / 4
+    assert card.metric_text("cost") == money("115 990,50")
+
+
+def test_unit_price_mode_in_gui(example):
+    r = results(example)
+    r.mode_combo.set_value(PriceMode.UNIT_PRICE)
+    r.value_edit.setText("160000")
+    example.calculator.recalc()
+    (card,) = r.unit_cards
+    assert card.metric_text("target") == money("160 000,00")
+    assert "за 1 шт" in r.target_summary.text()
 
 
 def test_editing_recalculates_on_the_fly(example, qtbot):
@@ -104,8 +132,8 @@ def test_price_modes(example):
     r.mode_combo.set_value(PriceMode.MARGIN)
     r.value_edit.setText("25")
     example.calculator.recalc()
-    assert r.target_view.value_text("Цена без НДС") == money("196 974,67")
-    assert r.target_box.title() == "Цена с маржинальностью 25%"
+    assert r.unit_cards[0].metric_text("target") == money("196 974,67")
+    assert r.target_summary.text().startswith("Цена с маржинальностью 25%")
 
     r.value_edit.setText("100")
     example.calculator.recalc()

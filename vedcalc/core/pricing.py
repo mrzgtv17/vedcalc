@@ -34,11 +34,21 @@ ONE = Decimal(1)
 
 @dataclass(frozen=True, slots=True)
 class ItemPrice:
+    """Доля позиции в цене партии (пропорционально себестоимости позиции)."""
+
     name: str
     quantity: Decimal
     unit: Unit
     price_net: Decimal
     vat: Decimal
+    price_dependent: Decimal = ZERO
+    gross_profit: Decimal = ZERO
+    profit_tax: Decimal = ZERO
+    net_profit: Decimal = ZERO
+
+    def per_unit(self, value: Decimal) -> Decimal:
+        """Сумма позиции → на 1 единицу (шт, кг или т — как задано в позиции)."""
+        return value / self.quantity
 
     @property
     def price_gross(self) -> Decimal:
@@ -130,11 +140,18 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
     weights = [it.cost_net for it in cost.items]
     if sum(weights, ZERO) <= 0:
         weights = [it.goods for it in cost.items]
+    shares = zip(
+        cost.items,
+        allocate(p, weights),
+        allocate(sale_vat, weights),
+        allocate(dependent, weights),
+        allocate(gross, weights),
+        allocate(tax, weights),
+        strict=True,
+    )
     items = tuple(
-        ItemPrice(it.name, it.quantity, it.unit, pn, vat)
-        for it, pn, vat in zip(
-            cost.items, allocate(p, weights), allocate(sale_vat, weights), strict=True
-        )
+        ItemPrice(it.name, it.quantity, it.unit, pn, vat, dep, g, tx, g - tx)
+        for it, pn, vat, dep, g, tx in shares
     )
 
     ex = Explainer()
@@ -225,6 +242,16 @@ def price_for(cost: CostResult, mode: PriceMode, value: Decimal | int | str) -> 
         raise _fail("sale.price_dependent_rate", "Расходы от выручки должны быть меньше 100%")
     if mode is PriceMode.PRICE:
         return evaluate(cost, x)
+    if mode is PriceMode.UNIT_PRICE:
+        if len(cost.items) != 1:
+            raise _fail(
+                "price",
+                "Цену за единицу можно задать, когда в расчёте одна позиция; "
+                "для нескольких позиций задайте цену партии",
+            )
+        if x < 0:
+            raise _fail("price", "Цена не может быть отрицательной")
+        return evaluate(cost, x * cost.items[0].quantity)
     if mode is PriceMode.MARKUP:
         if x <= -100:
             raise _fail("markup", "Наценка должна быть больше −100%")

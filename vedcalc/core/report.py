@@ -9,7 +9,14 @@ from decimal import Decimal
 from vedcalc.core.costing import CostResult
 from vedcalc.core.explain import ExplainStep, fmt_money, fmt_pct, fmt_rate
 from vedcalc.core.models import PriceMode, Shipment
-from vedcalc.core.pricing import PriceResult, VatGap, break_even, price_for, vat_gap
+from vedcalc.core.pricing import (
+    PriceResult,
+    VatGap,
+    break_even,
+    price_for,
+    vat_gap,
+)
+from vedcalc.core.unit_economics import UnitView, unit_views
 from vedcalc.core.validation import InputError
 
 
@@ -109,10 +116,68 @@ class Report:
         return Section("Безубыточная цена", tuple(rows))
 
     def target_section(self) -> Section:
-        title = target_title(self.cost.sale.target_mode, self.cost.sale.target_value)
+        title = self.target_title
         if self.target is None:
             return Section(title, (Row("Ошибка", self.target_error or ""),))
         return Section(title, self.price_rows(self.target))
+
+    def batch_section(self) -> Section:
+        """Итоги по всей партии — компактно, после расчёта на единицу."""
+        c, be, tg = self.cost, self.break_even, self.target
+        osn = self.vat_payer
+        rows = [
+            Row(
+                "Себестоимость партии без НДС" if osn else "Себестоимость партии (с НДС, УСН)",
+                c.cost_net,
+                strong=True,
+            ),
+        ]
+        if osn:
+            rows.append(
+                Row(
+                    "НДС к вычету",
+                    c.deductible_vat,
+                    hint=f"НДС при ввозе {fmt_money(c.import_vat)} + по услугам "
+                    f"{fmt_money(c.services_vat)}",
+                )
+            )
+        rows += [
+            Row("Таможенная стоимость", c.customs_value),
+            Row("Таможенный сбор", c.customs_fee, hint=c.fee_bracket.label),
+            Row("Ввозная таможенная пошлина", c.duty),
+        ]
+        if c.excise:
+            rows.append(Row("Акциз", c.excise))
+        rows.append(Row("НДС при ввозе", c.import_vat))
+        rows.append(
+            Row("Безубыточная цена партии" + (" с НДС" if osn else ""), be.price_gross, strong=True)
+        )
+        if tg is not None:
+            rows += [
+                Row(
+                    "Цена партии по сценарию" + (" с НДС" if osn else ""),
+                    tg.price_gross,
+                    strong=True,
+                ),
+                Row("Чистая прибыль партии", tg.net_profit, strong=True),
+            ]
+            if osn:
+                rows.append(
+                    Row(
+                        "НДС к уплате (справочно)",
+                        tg.vat_payable,
+                        hint="Не расход: платится из НДС, полученного от покупателя",
+                    )
+                )
+        if osn:
+            rows.append(
+                Row(
+                    "НДС-разрыв при P = C",
+                    self.gap.amount,
+                    hint=self.gap.explanation(c.sale.vat_rate),
+                )
+            )
+        return Section("Итого по партии", tuple(rows))
 
     def rates_rows(self) -> tuple[Row, ...]:
         rows = []
@@ -139,6 +204,17 @@ class Report:
             Row("Налог на прибыль", f"{c.sale.profit_tax_rate}%"),
         )
 
+    # --- на единицу товара -----------------------------------------------------------
+
+    @property
+    def target_title(self) -> str:
+        unit = self.cost.items[0].unit.label if len(self.cost.items) == 1 else None
+        return target_title(self.cost.sale.target_mode, self.cost.sale.target_value, unit)
+
+    def unit_views(self) -> list[UnitView]:
+        """Себестоимость и цены в пересчёте на 1 шт / кг / т по каждой позиции."""
+        return unit_views(self.shipment, self.cost, self.break_even, self.target)
+
     def step_groups(self) -> list[tuple[str, tuple[ExplainStep, ...]]]:
         """Шаги расшифровки, сгруппированные по разделам, в порядке расчёта."""
         groups: dict[str, list[ExplainStep]] = {}
@@ -147,23 +223,20 @@ class Report:
         result = [(title, tuple(steps)) for title, steps in groups.items()]
         result.append(("Безубыточная цена", self.break_even.steps))
         if self.target is not None:
-            result.append(
-                (
-                    target_title(self.cost.sale.target_mode, self.cost.sale.target_value),
-                    self.target.steps,
-                )
-            )
+            result.append((self.target_title, self.target.steps))
         return result
 
 
-def target_title(mode: PriceMode, value: Decimal) -> str:
+def target_title(mode: PriceMode, value: Decimal, unit_label: str | None = None) -> str:
     if mode is PriceMode.MARKUP:
         return f"Цена с наценкой {fmt_rate(value)}"
     if mode is PriceMode.MARGIN:
         return f"Цена с маржинальностью {fmt_rate(value)}"
     if mode is PriceMode.NET_PROFIT:
-        return f"Цена с чистой прибылью {fmt_money(value)} руб."
-    return f"Продажа за {fmt_money(value)} руб. без НДС"
+        return f"Цена с чистой прибылью {fmt_money(value)} руб. на партию"
+    if mode is PriceMode.UNIT_PRICE:
+        return f"Продажа по {fmt_money(value)} руб. за 1 {unit_label or 'ед.'} без НДС"
+    return f"Продажа партии за {fmt_money(value)} руб. без НДС"
 
 
 def build_report(shipment: Shipment, cost: CostResult) -> Report:
