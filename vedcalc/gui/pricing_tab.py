@@ -459,4 +459,5 @@ class PricingTab(QWidget):
             title = state.manual_cost.name
         self.report = build_price_report(basis, state.financing, title, cost_report)
         self.results.show_report(self.report)
+        self.results.whatif_view.set_report(self.report, self.import_tab.fee_scale)
         return self.report

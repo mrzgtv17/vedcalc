@@ -379,12 +379,18 @@ class MainWindow(QMainWindow):
         name, _ = QFileDialog.getSaveFileName(self, title, f"{base}.{suffix}", file_filter)
         return Path(name) if name else None
 
+    def _whatif(self):
+        """Таблицы «Что если» с экрана — только для отчёта о цене."""
+        if self.current_report() is self.pricing.report:
+            return self.pricing.results.whatif_view.whatif
+        return None
+
     def export_pdf(self, path: Path | None = None) -> None:
         from vedcalc.gui.export_pdf import write_pdf
 
         path = path or self._export_path("pdf", "Экспорт в PDF", "PDF (*.pdf)")
         if path:
-            write_pdf(self.current_report(), path)
+            write_pdf(self.current_report(), path, self._whatif())
             self.statusBar().showMessage(f"PDF сохранён: {path}", 4000)
 
     def export_xlsx(self, path: Path | None = None) -> None:
@@ -394,8 +400,10 @@ class MainWindow(QMainWindow):
         if path:
             try:
                 report = self.current_report()
-                writer = write_price_xlsx if report is self.pricing.report else write_cost_xlsx
-                writer(report, path)
+                if report is self.pricing.report:
+                    write_price_xlsx(report, path, self._whatif())
+                else:
+                    write_cost_xlsx(report, path)
             except OSError as exc:
                 self._error(f"Не удалось сохранить файл:\n{exc}")
                 return
