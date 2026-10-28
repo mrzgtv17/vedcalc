@@ -23,6 +23,7 @@ from vedcalc.gui.form import PricingState, new_shipment
 from vedcalc.gui.pricing_tab import PricingTab
 from vedcalc.gui.theme import apply_theme
 from vedcalc.gui.updates import UpdateController
+from vedcalc.modules import builtin_modules
 from vedcalc.modules.registry import ModuleSpec, modules
 
 FILE_FILTER = "Расчёт ВЭД (*.vedcalc.json *.json)"
@@ -56,7 +57,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.calculator, "Импорт")
         self.tabs.addTab(self.pricing, "Цена продажи")
         self.tabs.currentChanged.connect(self._update_actions)
-        for spec in extra_modules if extra_modules is not None else modules():
+        specs = extra_modules if extra_modules is not None else builtin_modules() + modules()
+        for spec in sorted(specs, key=lambda m: m.order):
             self.tabs.addTab(spec.factory(), spec.title)
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
         self.setCentralWidget(self.tabs)
