@@ -12,8 +12,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-15        # Apple Silicon → arm64
-          - runner: macos-15-intel  # Intel → x86_64
+          - runner: macos-15  # Apple Silicon (arm64); сборка для Intel не выпускается
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +61,7 @@ jobs:
           cat >> notes.md <<'NOTES'
 
           ### Установка
-          - `*-macos-arm64.dmg` — Mac на Apple Silicon, `*-macos-x86_64.dmg` — Mac на Intel.
+          - `*-macos-arm64.dmg` — для Mac на Apple Silicon (M1 и новее). Сборки для Intel нет.
           - Сборка не подписана сертификатом Apple Developer: при первом запуске откройте
             приложение через правый клик → «Открыть».
           - Начиная с 0.2.0 обновление ставится из приложения: «Справка → Проверить обновления».

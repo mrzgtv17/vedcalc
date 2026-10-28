@@ -1,0 +1,24 @@
+{
+  "title": "Тарифы Wildberries для юнит-экономики (короба, малогабаритный товар)",
+  "valid_from": "2026-08-15",
+  "verified_on": "2026-10-28",
+  "sources": [
+    "https://selsup.ru/blog/logistika-wildberries/ (сверено со справочным центром WB 25.09.2026)",
+    "https://postavleno.ru/blog/logistika-wildberries-dlya-prodavcov/",
+    "https://lowmart.ru/articles/wildberries-logistics-in-2026-rates-and-calculation-formula/"
+  ],
+  "note": "Тарифы меняются часто — сверяйте с разделом «Тарифы» в кабинете продавца. СГТ/КГТ не поддерживаются.",
+  "logistics_small_tiers": [
+    {"up_to_liters": "0.2", "rub": "23"},
+    {"up_to_liters": "0.4", "rub": "26"},
+    {"up_to_liters": "0.6", "rub": "29"},
+    {"up_to_liters": "0.8", "rub": "30"},
+    {"up_to_liters": "1.0", "rub": "32"}
+  ],
+  "first_liter_rub": "46",
+  "extra_liter_rub": "14",
+  "warehouse_coef_pct": "170",
+  "storage_rub_per_liter_day": "0.08",
+  "acceptance_rub_per_liter": "1.7",
+  "acquiring_pct": "1.5"
+}
