@@ -172,14 +172,6 @@ class Packaging:
 
 
 @dataclass(slots=True)
-class ContainerFreight:
-    """Фрахт за контейнер: в расходы попадает «ставка × число контейнеров»."""
-
-    rate: Money | None = None
-    containers: int | None = None  # вручную; None — по загрузке
-
-
-@dataclass(slots=True)
 class Item:
     name: str
     unit_price: Money
@@ -328,12 +320,9 @@ class Shipment:
     financing: Financing = field(default_factory=Financing)
     pricing_source: PricingSource = PricingSource.IMPORT
     manual_cost: ManualCost = field(default_factory=ManualCost)
-    freight: ContainerFreight = field(default_factory=ContainerFreight)
 
     def currencies(self) -> set[str]:
         found = {i.unit_price.currency for i in self.items}
-        if self.freight.rate is not None:
-            found.add(self.freight.rate.currency)
         found |= {i.excise.currency for i in self.items}
         found |= {c.amount.currency for c in self.costs}
         found |= {i.duty.specific.currency for i in self.items if i.duty.specific}

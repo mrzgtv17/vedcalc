@@ -102,8 +102,6 @@ def _shipment(base: Shipment, sc: Scenario) -> Shipment:
         for line in s.costs:
             if line.kind in FREIGHT_KINDS:
                 line.amount = replace(line.amount, amount=line.amount.amount * k)
-        if s.freight.rate is not None:
-            s.freight.rate = replace(s.freight.rate, amount=s.freight.rate.amount * k)
     for item in s.items:
         if sc.duty_custom is not None:
             item.duty = DutyRate.ad_valorem(sc.duty_custom)
@@ -165,10 +163,7 @@ def sensitivity(
     else:
         notes.append("Все суммы в рублях — курс на расчёт не влияет.")
 
-    has_freight = shipment.freight.rate is not None or any(
-        line.kind in FREIGHT_KINDS for line in shipment.costs
-    )
-    if has_freight:
+    if any(line.kind in FREIGHT_KINDS for line in shipment.costs):
         table(
             "Фрахт",
             "Расходы «Доставка до границы» и «Доставка по РФ».",
