@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QVBoxLayout,
@@ -65,6 +66,8 @@ def _form_box(title: str) -> tuple[QGroupBox, QFormLayout]:
 
 class PricingTab(QWidget):
     modified = Signal()
+    reportChanged = Signal()
+    offerRequested = Signal()
 
     def __init__(self, import_tab, parent: QWidget | None = None):
         super().__init__(parent)
@@ -80,6 +83,14 @@ class PricingTab(QWidget):
         v.addWidget(self._build_source_box())
         v.addWidget(self._build_sale_box())
         v.addWidget(self._build_financing_box())
+        self.offer_button = QPushButton("Коммерческое предложение…")
+        self.offer_button.setObjectName("primary")
+        self.offer_button.setToolTip(
+            "КП для клиента в PDF или DOCX: цены и условия, без себестоимости и наценки"
+        )
+        self.offer_button.setEnabled(False)
+        self.offer_button.clicked.connect(self.offerRequested)
+        v.addWidget(self.offer_button)
         v.addStretch(1)
         left = QScrollArea()
         left.setWidgetResizable(True)
@@ -415,6 +426,13 @@ class PricingTab(QWidget):
                 error=True,
             )
             return None
+        finally:
+            self.offer_button.setEnabled(self.offer_ready)
+            self.reportChanged.emit()
+
+    @property
+    def offer_ready(self) -> bool:
+        return self.report is not None and self.report.target is not None
 
     def _recalc(self) -> PriceReport | None:
         state, issues = self.read_state()

@@ -15,16 +15,32 @@ SMOKE_ENV = "VEDCALC_SMOKE_TEST"
 
 
 def _smoke_test(window: MainWindow, app: QApplication, png_path: str) -> None:
-    """Проверка собранного приложения (CI): открыть пример, сделать снимок, выйти.
+    """Проверка собранного приложения (CI): открыть пример, сделать снимок, сохранить КП
+    в PDF и DOCX рядом со снимком, выйти.
 
-    Код выхода 0 — контрольный пример посчитан, иначе 1.
+    Код выхода 0 — контрольный пример посчитан и КП сохранено, иначе 1.
     """
     window.open_example()
 
     def finish() -> None:
+        from pathlib import Path
+
+        from vedcalc.core.offer import OfferInput, Requisites, build_offer
+        from vedcalc.gui.export_pdf import write_offer_pdf
+        from vedcalc.reports.offer_docx import write_offer_docx
+
         report = window.calculator.report
         ok = report is not None and str(report.cost.cost_net) == "147731.00"
         window.grab().save(png_path)
+        price = window.pricing.recalc()
+        if ok and price is not None:
+            offer = build_offer(price, OfferInput(), Requisites(company="Smoke"))
+            base = Path(png_path).with_suffix("")
+            write_offer_pdf(offer, base.with_suffix(".kp.pdf"))
+            write_offer_docx(offer, base.with_suffix(".kp.docx"))
+            ok = base.with_suffix(".kp.docx").stat().st_size > 1000
+        else:
+            ok = False
         print(f"smoke test: {'OK' if ok else 'FAILED'}, C = {report and report.cost.cost_net}")
         window.dirty = False
         app.exit(0 if ok else 1)
