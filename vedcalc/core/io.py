@@ -240,17 +240,56 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc
 
 
-def save_shipment(shipment: Shipment, path: Path) -> None:
-    text = json.dumps(shipment_to_dict(shipment), ensure_ascii=False, indent=2)
-    path.write_text(text + "\n", encoding="utf-8")
+def project_to_dict(shipment: Shipment, modules: dict[str, dict] | None = None) -> dict:
+    """Файл проекта: расчёт импорта и цены + состояние вкладок-модулей («Контейнер», «WB»).
+
+    Модули лежат в необязательном ключе "modules" — старые версии программы его не читают
+    и открывают такой файл как обычный расчёт.
+    """
+    data = shipment_to_dict(shipment)
+    if modules:
+        data["modules"] = modules
+    return data
 
 
-def load_shipment(path: Path) -> Shipment:
+def project_from_dict(data: dict[str, Any]) -> tuple[Shipment, dict[str, dict]]:
+    modules = data.get("modules") or {}
+    if not isinstance(modules, dict):
+        raise FileFormatError("Файл расчёта повреждён: раздел modules")
+    return shipment_from_dict(data), {k: v for k, v in modules.items() if isinstance(v, dict)}
+
+
+def write_json(data: dict, path: Path) -> None:
+    """Запись через временный файл: при сбое на диске остаётся прежняя версия."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def read_json(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError as exc:
         raise FileFormatError(f"Файл не является JSON: {exc}") from exc
-    return shipment_from_dict(data)
+    if not isinstance(data, dict):
+        raise FileFormatError("Это не файл расчёта")
+    return data
+
+
+def save_project(shipment: Shipment, modules: dict[str, dict] | None, path: Path) -> None:
+    write_json(project_to_dict(shipment, modules), path)
+
+
+def load_project(path: Path) -> tuple[Shipment, dict[str, dict]]:
+    return project_from_dict(read_json(path))
+
+
+def save_shipment(shipment: Shipment, path: Path) -> None:
+    save_project(shipment, None, path)
+
+
+def load_shipment(path: Path) -> Shipment:
+    return load_project(path)[0]
 
 
 def duplicate_shipment(shipment: Shipment, suffix: str = " (копия)") -> Shipment:

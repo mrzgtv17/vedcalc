@@ -60,6 +60,8 @@ def main() -> int:
     window.show()
     if smoke:
         _smoke_test(window, app, smoke)
+    else:
+        QTimer.singleShot(0, window.offer_recovery)
     return app.exec()
 
 

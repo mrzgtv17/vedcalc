@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +16,10 @@ from vedcalc.core.money import Money
 
 # GUI-тесты работают без экрана (CI, ssh)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Настройки, реквизиты и автосохранение — во временной папке, а не в ~/Library
+_TMP = Path(tempfile.mkdtemp(prefix="vedcalc-tests-"))
+os.environ["VEDCALC_SETTINGS_FILE"] = str(_TMP / "settings.ini")
+os.environ["VEDCALC_DATA_DIR"] = str(_TMP / "data")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CALC_DATE = date(2026, 3, 10)

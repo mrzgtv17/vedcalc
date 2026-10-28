@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from html import escape
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -79,8 +79,11 @@ def _tile(caption: str, value: str, sub: str, accent: bool = False) -> tuple[QFr
 
 
 class WbTab(QWidget):
+    modified = Signal()  # пользователь изменил ввод — проект нужно сохранить
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self._loading = False
         self.tariffs = load_tariffs()
         self.result: WbResult | None = None
         self.schemes: dict[Scheme, WbResult] = {}
@@ -164,7 +167,9 @@ class WbTab(QWidget):
         self._timer.setSingleShot(True)
         self._timer.setInterval(RECALC_DELAY_MS)
         self._timer.timeout.connect(self.recalc)
+        self._loading = True
         self.set_input(WbInput())
+        self._loading = False
 
     # --- форма --------------------------------------------------------------------------
 
@@ -344,7 +349,47 @@ class WbTab(QWidget):
     # --- реакции ------------------------------------------------------------------------
 
     def _changed(self, *_args) -> None:
+        if not self._loading:
+            self.modified.emit()
         self._timer.start()
+
+    # --- файл проекта -------------------------------------------------------------------
+
+    def save_state(self) -> dict:
+        """Ввод как есть (строки полей) — сохраняется и с ошибками, как набрал пользователь."""
+        return {
+            "name": self.name_edit.text(),
+            "target": self.target_combo.value().value,
+            "scheme": self.scheme_combo.value().value,
+            "tax_mode": self.tax_combo.value().value,
+            "fields": {key: edit.text() for key, edit in self._fields.items()},
+        }
+
+    def load_state(self, state: dict | None) -> None:
+        """Состояние из файла проекта; None — значения по умолчанию (новый расчёт)."""
+        self._loading = True
+        try:
+            self.set_input(WbInput())
+            if not state:
+                return
+            combos = ((self.target_combo, Target, "target"), (self.scheme_combo, Scheme, "scheme"),
+                      (self.tax_combo, TaxMode, "tax_mode"))  # fmt: skip
+            widgets = [*self._fields.values(), self.name_edit, *(c for c, _, _ in combos)]
+            for w in widgets:
+                w.blockSignals(True)
+            self.name_edit.setText(str(state.get("name", "")))
+            for combo, enum, key in combos:
+                if state.get(key) in enum._value2member_map_:
+                    combo.set_value(enum(state[key]))
+            for key, text in (state.get("fields") or {}).items():
+                if key in self._fields:
+                    self._fields[key].setText(str(text))
+            for w in widgets:
+                w.blockSignals(False)
+            self._apply_target_ui()
+            self.recalc()
+        finally:
+            self._loading = False
 
     def _apply_target_ui(self) -> None:
         target = self.target_combo.value()

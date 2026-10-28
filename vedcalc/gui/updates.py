@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from vedcalc import __version__, updater
+from vedcalc.gui.prefs import app_settings
 from vedcalc.updater import UpdateError, UpdateInfo
 
 SETTINGS_LAST_CHECK = "updates/last_check"
@@ -119,7 +120,7 @@ class UpdateController(QObject):
         super().__init__(window)
         self.window = window
         self.fetch = fetch or updater._http_get
-        self.settings = settings or QSettings("vedcalc", "vedcalc")
+        self.settings = settings or app_settings()
         self.threaded = threaded
         self._signals = _Signals()
         self._signals.checked.connect(self._on_checked)
