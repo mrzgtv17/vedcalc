@@ -64,6 +64,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self._build_menu()
+        self.pricing.reportChanged.connect(self._update_actions)
+        self.pricing.offerRequested.connect(self.commercial_offer)
         self.resize(1360, 860)
         self.dirty = False
         self._update_title()
@@ -94,6 +96,11 @@ class MainWindow(QMainWindow):
         self.xlsx_action = self._action("Экспорт в XLSX…", self.export_xlsx, "Ctrl+Shift+E")
         m.addAction(self.pdf_action)
         m.addAction(self.xlsx_action)
+        self.offer_action = self._action(
+            "Коммерческое предложение…", self.commercial_offer, "Ctrl+K"
+        )
+        m.addAction(self.offer_action)
+        m.addAction(self._action("Мои реквизиты…", self.edit_requisites))
         m.addSeparator()
         m.addAction(self._action("Выход", self.close, QKeySequence.StandardKey.Quit))
 
@@ -106,6 +113,7 @@ class MainWindow(QMainWindow):
         ready = self.current_report() is not None
         self.pdf_action.setEnabled(ready)
         self.xlsx_action.setEnabled(ready)
+        self.offer_action.setEnabled(self.pricing.offer_ready)
 
     # --- состояние --------------------------------------------------------------------
 
@@ -266,6 +274,22 @@ class MainWindow(QMainWindow):
                 self._error(f"Не удалось сохранить файл:\n{exc}")
                 return
             self.statusBar().showMessage(f"XLSX сохранён: {path}", 4000)
+
+    def _base_name(self) -> str:
+        return self.path.name.removesuffix(".json").removesuffix(".vedcalc") if self.path else ""
+
+    def commercial_offer(self) -> None:
+        from vedcalc.gui.offer import OfferDialog
+
+        if not self.pricing.offer_ready:
+            self._error("Цена продажи не рассчитана — заполните вкладку «Цена продажи».")
+            return
+        OfferDialog(self.pricing.report, base_name=self._base_name(), parent=self).exec()
+
+    def edit_requisites(self) -> None:
+        from vedcalc.gui.offer import RequisitesDialog
+
+        RequisitesDialog(parent=self).exec()
 
     def tnved_info(self) -> None:
         from vedcalc.core.tnved import STALE_AFTER_DAYS, load_directory

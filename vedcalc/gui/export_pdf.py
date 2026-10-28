@@ -31,3 +31,23 @@ def write_pdf(report: CostReport | PriceReport, path: Path) -> None:
     doc = QTextDocument()
     doc.setHtml(html)
     doc.print_(writer)
+
+
+def write_offer_pdf(offer, path: Path) -> None:
+    """Коммерческое предложение в PDF (A4)."""
+    from vedcalc.reports.offer_html import render_offer_html
+
+    writer = QPdfWriter(str(path))
+    writer.setTitle(f"{offer.inp.subject} от {offer.inp.offer_date:%d.%m.%Y}")
+    writer.setCreator(offer.requisites.company or "Калькулятор ВЭД")
+    writer.setPageLayout(
+        QPageLayout(
+            QPageSize(QPageSize.PageSizeId.A4),
+            QPageLayout.Orientation.Portrait,
+            QMarginsF(18, 15, 15, 15),
+            QPageLayout.Unit.Millimeter,
+        )
+    )
+    doc = QTextDocument()
+    doc.setHtml(render_offer_html(offer))
+    doc.print_(writer)

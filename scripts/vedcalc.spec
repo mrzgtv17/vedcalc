@@ -13,7 +13,7 @@ a = Analysis(
         (str(ROOT / "vedcalc" / "data" / "*.json"), "vedcalc/data"),
         (str(ROOT / "vedcalc" / "gui" / "assets" / "*.svg"), "vedcalc/gui/assets"),
     ],
-    hiddenimports=["openpyxl", "certifi"],
+    hiddenimports=["openpyxl", "certifi", "docx"],
     excludes=["tkinter", "pytest", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick"],
     noarchive=False,
 )
