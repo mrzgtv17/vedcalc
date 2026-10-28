@@ -163,7 +163,9 @@ class RowTable(QTableWidget):
         self.rows.clear()
 
     def _fit_height(self) -> None:
-        h = self.horizontalHeader().height() + 30 * max(len(self.rows), 2) + 6
+        # + полоса прокрутки: широкие таблицы прокручиваются вбок и иначе прячут строку
+        scroll = self.horizontalScrollBar().sizeHint().height()
+        h = self.horizontalHeader().height() + 30 * max(len(self.rows), 2) + 6 + scroll
         self.setFixedHeight(min(max(h, 110), 320))
 
 
