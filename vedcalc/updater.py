@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -281,12 +282,31 @@ def _bundle_version(app: Path) -> tuple[str, str]:
     return info.get("CFBundleIdentifier", ""), info.get("CFBundleShortVersionString", "")
 
 
+ATTACH_ATTEMPTS = 5
+
+
+def _attach(
+    dmg: Path, mount: Path, run: Runner, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """hdiutil attach с повторами: сразу после отключения другого образа macOS иногда
+    отвечает «Resource temporarily unavailable»."""
+    cmd = ["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(dmg)]
+    for attempt in range(1, ATTACH_ATTEMPTS + 1):
+        try:
+            run(cmd)
+            return
+        except UpdateError:
+            if attempt == ATTACH_ATTEMPTS:
+                raise
+            sleep(attempt)
+
+
 def stage_from_dmg(dmg: Path, bundle: Path, expected_version: str, run: Runner = _run) -> Path:
     """Монтирует образ, проверяет и копирует новое .app рядом с текущим (ещё не подменяет)."""
     mount = Path(tempfile.mkdtemp(prefix="vedcalc-mount-"))
     staged = bundle.parent / f".{bundle.stem}-update.app"
     shutil.rmtree(staged, ignore_errors=True)
-    run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(dmg)])
+    _attach(dmg, mount, run)
     try:
         apps = [p for p in mount.iterdir() if p.suffix == ".app" and not p.is_symlink()]
         if len(apps) != 1:

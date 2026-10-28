@@ -289,3 +289,22 @@ def test_fallback_failure_is_friendly():
 def test_changelog_section():
     assert updater.changelog_section(CHANGELOG, "0.2.0") == "- старое"
     assert updater.changelog_section(CHANGELOG, "9.9.9") == ""
+
+
+def test_attach_retries_temporary_failure(tmp_path):
+    calls, pauses = [], []
+
+    def flaky(cmd):
+        calls.append(cmd)
+        if len(calls) < 3:
+            raise UpdateError("hdiutil: attach failed - Resource temporarily unavailable")
+        return ""
+
+    updater._attach(tmp_path / "a.dmg", tmp_path / "m", flaky, pauses.append)
+    assert len(calls) == 3 and pauses == [1, 2]
+
+    def broken(cmd):
+        raise UpdateError("hdiutil: attach failed - image not recognized")
+
+    with pytest.raises(UpdateError, match="not recognized"):
+        updater._attach(tmp_path / "a.dmg", tmp_path / "m", broken, lambda s: None)
