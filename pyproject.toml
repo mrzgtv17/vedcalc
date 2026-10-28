@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vedcalc"
-version = "0.2.0"
+version = "0.3.0"
 description = "Калькулятор ВЭД: себестоимость импорта и цена продажи B2B"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -8,15 +8,16 @@ from html import escape
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QSplitter, QWidget
 
+from vedcalc.core.containers import estimate_load
 from vedcalc.core.costing import calculate
 from vedcalc.core.customs import NotSupportedError
 from vedcalc.core.fees import FeeScale, load_fee_scale
 from vedcalc.core.fx import FxError, RateProvider, RateSet, resolve_rates
 from vedcalc.core.models import Shipment
-from vedcalc.core.report import Report, build_report
+from vedcalc.core.report import CostReport, build_cost_report
 from vedcalc.core.validation import InputError
 from vedcalc.gui.form import ShipmentForm, new_shipment
-from vedcalc.gui.results import ResultsPanel
+from vedcalc.gui.results import CostResultsPanel
 
 RECALC_DELAY_MS = 150
 
@@ -82,6 +83,8 @@ class RatesLoader(QObject):
 
 
 class CalculatorTab(QWidget):
+    """Вкладка «Импорт»: себестоимость партии и единицы, подсказка о загрузке контейнера."""
+
     modified = Signal()
     reportChanged = Signal()
 
@@ -97,11 +100,11 @@ class CalculatorTab(QWidget):
         self.fee_scale = fee_scale or load_fee_scale()
         self.rates = RatesLoader(provider, threaded=threaded, parent=self)
         self.rates.loaded.connect(self.recalc)
-        self.report: Report | None = None
+        self.report: CostReport | None = None
         self.touched = False  # пользователь уже что-то вводил после открытия расчёта
 
         self.form = ShipmentForm()
-        self.results = ResultsPanel()
+        self.results = CostResultsPanel()
 
         left = QScrollArea()
         left.setWidgetResizable(True)
@@ -125,7 +128,6 @@ class CalculatorTab(QWidget):
         self._timer.timeout.connect(self.recalc)
 
         self.form.changed.connect(self._on_input_changed)
-        self.results.targetChanged.connect(self._on_target_changed)
 
         self.set_shipment(new_shipment())
 
@@ -134,7 +136,6 @@ class CalculatorTab(QWidget):
     def set_shipment(self, shipment: Shipment) -> None:
         self.form.set_shipment(shipment)
         self.touched = False
-        self.results.set_target(shipment.sale.target_mode, shipment.sale.target_value)
         self.recalc()
 
     def shipment(self) -> Shipment:
@@ -151,15 +152,7 @@ class CalculatorTab(QWidget):
         self.modified.emit()
         self._timer.start()
 
-    def _on_target_changed(self) -> None:
-        target = self.results.target()
-        if target is None:
-            return
-        self.form.target_mode, self.form.target_value = target
-        self.modified.emit()
-        self._timer.start()
-
-    def recalc(self) -> Report | None:
+    def recalc(self) -> CostReport | None:
         """Пересчёт. Неожиданная ошибка показывается, а не оставляет на экране старый итог."""
         try:
             return self._recalc()
@@ -172,7 +165,7 @@ class CalculatorTab(QWidget):
             )
             return None
 
-    def _recalc(self) -> Report | None:
+    def _recalc(self) -> CostReport | None:
         self._timer.stop()
         # Курсы на дату расчёта запрашиваем сразу, даже если форма ещё не заполнена
         form_date = self.form.date_edit.date().toPython()
@@ -209,7 +202,7 @@ class CalculatorTab(QWidget):
         try:
             rates = resolve_rates(shipment.currencies(), on, self.rates, shipment.manual_rates)
             cost = calculate(shipment, rates, self.fee_scale)
-            report = build_report(shipment, cost)
+            report = build_cost_report(shipment, cost, estimate_load(shipment))
         except InputError as exc:
             self.form.mark_issues(exc.issues if self.touched else [])
             self._set_report(None)
@@ -223,7 +216,7 @@ class CalculatorTab(QWidget):
         self.results.show_report(report)
         return report
 
-    def _set_report(self, report: Report | None) -> None:
+    def _set_report(self, report: CostReport | None) -> None:
         self.report = report
         self.reportChanged.emit()
 

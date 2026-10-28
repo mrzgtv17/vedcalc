@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import ClassVar
@@ -35,8 +36,10 @@ from vedcalc.core.models import (
     CostLine,
     DeliveryMode,
     DutyRate,
+    Financing,
     Item,
-    PriceMode,
+    ManualCost,
+    PricingSource,
     SaleParams,
     Shipment,
     TaxRegime,
@@ -180,9 +183,17 @@ class ShipmentForm(QWidget):
         Column("duty", "Пошлина, %", 80, "Адвалорная ставка ввозной пошлины, % от ТС"),
         Column("vat", "НДС, %", 70, "Ставка НДС при ввозе"),
         Column("excise", "Акциз, ₽", 80, "Заглушка: сумма акциза в рублях, обычно 0"),
-        Column("gross", "Брутто, кг", 85, "Нужен для распределения расходов по весу"),
-        Column("net", "Нетто, кг", 80),
-        Column("volume", "Объём, м³", 80),
+        Column(
+            "gross",
+            "Брутто, кг",
+            85,
+            "Вес брутто всей позиции. Нужен для распределения расходов по весу "
+            "и подсказки о загрузке контейнера",
+        ),
+        Column("net", "Нетто, кг", 80, "Вес нетто всей позиции"),
+        Column(
+            "volume", "Объём, м³", 80, "Объём всей позиции — для подсказки о загрузке контейнера"
+        ),
     ]
     COST_COLUMNS: ClassVar[list[Column]] = [
         Column("name", "Расход", 240),
@@ -197,8 +208,9 @@ class ShipmentForm(QWidget):
         super().__init__(parent)
         self.settings = load_settings()
         self._loading = False
-        self.target_mode = PriceMode.MARKUP
-        self.target_value = Decimal(20)
+        # Параметры цены продажи живут на вкладке «Цена продажи», но сохраняются
+        # в том же файле расчёта — форма импорта лишь переносит их как есть.
+        self.pricing = PricingState()
         self._field_widgets: dict[str, QWidget] = {}
 
         layout = QVBoxLayout(self)
@@ -207,7 +219,6 @@ class ShipmentForm(QWidget):
         layout.addWidget(self._build_items_box())
         layout.addWidget(self._build_costs_box())
         layout.addWidget(self._build_rates_box())
-        layout.addWidget(self._build_sale_box())
         layout.addStretch(1)
 
     # --- построение -----------------------------------------------------------------
@@ -302,32 +313,6 @@ class ShipmentForm(QWidget):
         v.addLayout(grid)
         return box
 
-    def _build_sale_box(self) -> QGroupBox:
-        box = QGroupBox("Параметры продажи")
-        form = QFormLayout(box)
-        _grow_fields(form)
-        self.sale_vat = VatCombo(self.settings.allowed_vat_rates)
-        self.profit_tax = DecimalEdit()
-        self.price_dependent = DecimalEdit()
-        self.price_dependent.setToolTip(
-            "Комиссия, эквайринг, бонус клиенту — доля от выручки без НДС (r). "
-            "Безубыточная цена = C / (1 − r)."
-        )
-        self.profit_tax_label = QLabel("Налог на прибыль, %")
-        form.addRow("НДС при продаже", self.sale_vat)
-        form.addRow(self.profit_tax_label, self.profit_tax)
-        form.addRow("Расходы от выручки, %", self.price_dependent)
-        for w in (self.sale_vat, self.profit_tax, self.price_dependent):
-            _connect(w, self._emit_changed)
-        self._field_widgets.update(
-            {
-                "sale.vat_rate": self.sale_vat,
-                "sale.profit_tax_rate": self.profit_tax,
-                "sale.price_dependent_rate": self.price_dependent,
-            }
-        )
-        return box
-
     # --- строки таблиц -------------------------------------------------------------
 
     def add_item(self, item: Item | None = None) -> None:
@@ -404,19 +389,11 @@ class ShipmentForm(QWidget):
             self.manual_check.setChecked(bool(s.manual_rates))
             for code, edit in self.manual_edits.items():
                 edit.set_value(s.manual_rates.get(code))
-            self._set_sale(s.sale)
-            self.target_mode = s.sale.target_mode
-            self.target_value = s.sale.target_value
+            self.pricing = PricingState.from_shipment(s)
         finally:
             self._loading = False
         self.clear_marks()
         self.changed.emit()
-
-    def _set_sale(self, sale: SaleParams) -> None:
-        self.sale_vat.set_value(sale.vat_rate)
-        self.profit_tax.set_value(sale.profit_tax_rate)
-        self.price_dependent.set_value(sale.price_dependent_rate)
-        self._apply_regime_ui()
 
     def read(self) -> tuple[Shipment | None, list[Issue]]:
         """Читает форму. Ошибки разбора чисел возвращаются как Issue с путём к полю."""
@@ -503,16 +480,6 @@ class ShipmentForm(QWidget):
                     else:
                         manual[c] = value
 
-        sale = SaleParams(
-            vat_rate=self.sale_vat.value(),
-            profit_tax_rate=num(self.profit_tax, "sale.profit_tax_rate", "Налог") or ZERO,
-            price_dependent_rate=num(
-                self.price_dependent, "sale.price_dependent_rate", "Расходы от выручки"
-            )
-            or ZERO,
-            target_mode=self.target_mode,
-            target_value=self.target_value,
-        )
         self._read_widgets = widgets
         if issues:
             return None, issues
@@ -526,7 +493,10 @@ class ShipmentForm(QWidget):
             items=items,
             costs=costs,
             manual_rates=manual,
-            sale=sale,
+            sale=copy.deepcopy(self.pricing.sale),
+            financing=copy.deepcopy(self.pricing.financing),
+            pricing_source=self.pricing.source,
+            manual_cost=copy.deepcopy(self.pricing.manual_cost),
         ), []
 
     # --- подсветка ошибок ---------------------------------------------------------
@@ -560,22 +530,8 @@ class ShipmentForm(QWidget):
     def _on_regime_changed(self) -> None:
         if self._loading:
             return
-        regime = self.regime_combo.value()
-        defaults = SaleParams.for_regime(regime)
-        self._loading = True
-        try:
-            self.sale_vat.set_value(defaults.vat_rate)
-            self.profit_tax.set_value(defaults.profit_tax_rate)
-            self._apply_regime_ui()
-        finally:
-            self._loading = False
         self.regimeChanged.emit()
         self.changed.emit()
-
-    def _apply_regime_ui(self) -> None:
-        osn = self.regime_combo.value() is TaxRegime.OSN
-        self.sale_vat.setEnabled(osn)
-        self.profit_tax_label.setText("Налог на прибыль, %" if osn else "Ставка УСН, %")
 
     def set_rates_info(self, html: str) -> None:
         self.rates_info.setText(html)
@@ -584,6 +540,25 @@ class ShipmentForm(QWidget):
         for code, edit in self.manual_edits.items():
             value = rates.get(code)
             edit.setPlaceholderText(f"ЦБ: {value:.4f}".replace(".", ",") if value else "курс ЦБ")
+
+
+@dataclass(slots=True)
+class PricingState:
+    """Параметры вкладки «Цена продажи», сохраняемые вместе с расчётом."""
+
+    sale: SaleParams = field(default_factory=SaleParams)
+    financing: Financing = field(default_factory=Financing)
+    source: PricingSource = PricingSource.IMPORT
+    manual_cost: ManualCost = field(default_factory=ManualCost)
+
+    @classmethod
+    def from_shipment(cls, s: Shipment) -> PricingState:
+        return cls(
+            copy.deepcopy(s.sale),
+            copy.deepcopy(s.financing),
+            s.pricing_source,
+            copy.deepcopy(s.manual_cost),
+        )
 
 
 def new_shipment() -> Shipment:

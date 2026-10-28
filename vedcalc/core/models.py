@@ -12,11 +12,14 @@ from vedcalc.core.units import Unit
 
 
 class DeliveryMode(StrEnum):
-    """Способ доставки. Пока справочно, в будущем — для калькулятора загрузки."""
+    """Способ доставки. Для контейнеров — подсказка о загрузке по весу и объёму."""
 
     DC20 = "20DC"
+    HC20 = "20HC"
     DC40 = "40DC"
     HC40 = "40HC"
+    PW45 = "45PW"
+    HCPW45 = "45HCPW"
     LCL = "LCL"
     FTL = "FTL"
     RAIL = "RAIL"
@@ -25,9 +28,12 @@ class DeliveryMode(StrEnum):
     @property
     def label(self) -> str:
         return {
-            DeliveryMode.DC20: "Контейнер 20DC",
-            DeliveryMode.DC40: "Контейнер 40DC",
-            DeliveryMode.HC40: "Контейнер 40HC",
+            DeliveryMode.DC20: "Контейнер 20' DC",
+            DeliveryMode.HC20: "Контейнер 20' HC",
+            DeliveryMode.DC40: "Контейнер 40' DC",
+            DeliveryMode.HC40: "Контейнер 40' HC",
+            DeliveryMode.PW45: "Контейнер 45' PW",
+            DeliveryMode.HCPW45: "Контейнер 45' HC PW",
             DeliveryMode.LCL: "Сборный груз (LCL)",
             DeliveryMode.FTL: "Фура (FTL)",
             DeliveryMode.RAIL: "Ж/д контейнер",
@@ -162,6 +168,70 @@ class SaleParams:
         return fresh
 
 
+class FinancingMode(StrEnum):
+    OFF = "off"
+    SIMPLE = "simple"  # сумма × ставка × дни / 365
+    SCHEDULE = "schedule"  # по графику платежей поставщику и от покупателя
+
+    @property
+    def label(self) -> str:
+        return {
+            FinancingMode.OFF: "Не учитывать",
+            FinancingMode.SIMPLE: "Упрощённо: сумма × ставка × срок",
+            FinancingMode.SCHEDULE: "По графику платежей",
+        }[self]
+
+
+@dataclass(slots=True)
+class Financing:
+    """Стоимость денег: проценты за деньги, вложенные в партию до оплаты покупателем.
+
+    График (дни от предоплаты поставщику = день 0):
+    предоплата поставщику → остаток поставщику → прибытие (логистика) →
+    выпуск (пошлина, НДС, сбор) → поставка покупателю → оплата покупателя.
+    """
+
+    mode: FinancingMode = FinancingMode.OFF
+    annual_rate: Decimal = Decimal("20")  # % годовых
+    borrowed_share: Decimal = Decimal("100")  # доля заёмных денег во вложениях, %
+    # Упрощённо
+    loan_days: int = 60
+    loan_amount: Decimal | None = None  # None — себестоимость партии с НДС
+    # По графику
+    supplier_prepay_pct: Decimal = Decimal("30")
+    supplier_balance_day: int = 30
+    transit_days: int = 40
+    customs_days: int = 5
+    delivery_days: int = 7
+    buyer_prepay_pct: Decimal = ZERO
+    buyer_prepay_day: int = 0
+    buyer_deferral_days: int = 30
+
+
+class PricingSource(StrEnum):
+    IMPORT = "import"  # себестоимость из вкладки «Импорт»
+    MANUAL = "manual"  # себестоимость вводится вручную
+
+    @property
+    def label(self) -> str:
+        return {
+            PricingSource.IMPORT: "Из расчёта импорта",
+            PricingSource.MANUAL: "Ввести вручную",
+        }[self]
+
+
+@dataclass(slots=True)
+class ManualCost:
+    """Себестоимость, заданная вручную (вкладка «Цена продажи», без расчёта импорта)."""
+
+    name: str = "Товар"
+    quantity: Decimal = Decimal(1)
+    unit: Unit = Unit.PCS
+    unit_cost_net: Decimal = ZERO  # себестоимость единицы без НДС (при УСН — с НДС)
+    unit_deductible_vat: Decimal = ZERO  # НДС к вычету на единицу
+    tax_regime: TaxRegime = TaxRegime.OSN
+
+
 @dataclass(slots=True)
 class Shipment:
     name: str = "Новый расчёт"
@@ -174,6 +244,9 @@ class Shipment:
     # Ручные курсы «что если»: валюта → рублей за 1 единицу. Пусто — курсы ЦБ.
     manual_rates: dict[str, Decimal] = field(default_factory=dict)
     sale: SaleParams = field(default_factory=SaleParams)
+    financing: Financing = field(default_factory=Financing)
+    pricing_source: PricingSource = PricingSource.IMPORT
+    manual_cost: ManualCost = field(default_factory=ManualCost)
 
     def currencies(self) -> set[str]:
         found = {i.unit_price.currency for i in self.items}

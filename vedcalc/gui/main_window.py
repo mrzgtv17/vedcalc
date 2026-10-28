@@ -19,7 +19,8 @@ from vedcalc.core.io import (
 )
 from vedcalc.core.validation import InputError
 from vedcalc.gui.calculator import CalculatorTab
-from vedcalc.gui.form import new_shipment
+from vedcalc.gui.form import PricingState, new_shipment
+from vedcalc.gui.pricing_tab import PricingTab
 from vedcalc.gui.theme import apply_theme
 from vedcalc.gui.updates import UpdateController
 from vedcalc.modules.registry import ModuleSpec, modules
@@ -49,7 +50,12 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.addTab(self.calculator, "Импорт и цена")
+        self.pricing = PricingTab(self.calculator)
+        self.pricing.modified.connect(self._mark_dirty)
+        self.pricing.set_state(self.calculator.form.pricing)
+        self.tabs.addTab(self.calculator, "Импорт")
+        self.tabs.addTab(self.pricing, "Цена продажи")
+        self.tabs.currentChanged.connect(self._update_actions)
         for spec in extra_modules if extra_modules is not None else modules():
             self.tabs.addTab(spec.factory(), spec.title)
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
@@ -94,7 +100,7 @@ class MainWindow(QMainWindow):
         h.addAction(self._action("О программе", self.about))
 
     def _update_actions(self) -> None:
-        ready = self.calculator.report is not None
+        ready = self.current_report() is not None
         self.pdf_action.setEnabled(ready)
         self.xlsx_action.setEnabled(ready)
 
@@ -110,8 +116,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{name}{' •' if self.dirty else ''} — {APP_TITLE}")
         self.setWindowModified(self.dirty)
 
+    def current_report(self):
+        """Отчёт активной вкладки: себестоимость импорта или цена продажи."""
+        if self.tabs.currentWidget() is self.pricing:
+            return self.pricing.report
+        if self.tabs.currentWidget() is self.calculator:
+            return self.calculator.report
+        return None
+
     def _load(self, shipment, path: Path | None) -> None:
         self.calculator.set_shipment(shipment)
+        self.pricing.set_state(PricingState.from_shipment(shipment))
         self.path = path
         self.dirty = False
         self._update_title()
@@ -213,15 +228,17 @@ class MainWindow(QMainWindow):
     # --- экспорт ----------------------------------------------------------------------
 
     def _export_path(self, suffix: str, title: str, file_filter: str) -> Path | None:
-        report = self.calculator.report
+        report = self.current_report()
         if report is None:
             self._error("Нет результата для экспорта — проверьте ввод.")
             return None
         base = (
             self.path.name.removesuffix(".json").removesuffix(".vedcalc")
             if self.path
-            else report.shipment.name
+            else getattr(report, "title", None) or report.shipment.name
         )
+        if report is self.pricing.report:
+            base += " — цена продажи"
         name, _ = QFileDialog.getSaveFileName(self, title, f"{base}.{suffix}", file_filter)
         return Path(name) if name else None
 
@@ -230,16 +247,18 @@ class MainWindow(QMainWindow):
 
         path = path or self._export_path("pdf", "Экспорт в PDF", "PDF (*.pdf)")
         if path:
-            write_pdf(self.calculator.report, path)
+            write_pdf(self.current_report(), path)
             self.statusBar().showMessage(f"PDF сохранён: {path}", 4000)
 
     def export_xlsx(self, path: Path | None = None) -> None:
-        from vedcalc.reports.xlsx import write_xlsx
+        from vedcalc.reports.xlsx import write_cost_xlsx, write_price_xlsx
 
         path = path or self._export_path("xlsx", "Экспорт в XLSX", "Excel (*.xlsx)")
         if path:
             try:
-                write_xlsx(self.calculator.report, path)
+                report = self.current_report()
+                writer = write_price_xlsx if report is self.pricing.report else write_cost_xlsx
+                writer(report, path)
             except OSError as exc:
                 self._error(f"Не удалось сохранить файл:\n{exc}")
                 return

@@ -110,6 +110,13 @@ QToolButton[popupMode="2"] {{ padding-right: 24px; }}
 QToolButton#rowDelete {{ border: none; background: transparent; color: {TEXT_FAINT}; padding: 0; font-size: 12px; }}
 QToolButton#rowDelete:hover {{ color: {NEGATIVE}; background: {DANGER_SOFT}; border-radius: 6px; }}
 
+QProgressBar#loadBar {{
+    border: none; background: {SURFACE_ALT}; border-radius: 6px; min-height: 20px;
+    text-align: center; color: {TEXT}; font-size: 12px;
+}}
+QProgressBar#loadBar::chunk {{ background: #CFE3D6; border-radius: 6px; }}
+QProgressBar#loadBar[over="true"]::chunk {{ background: #F2C4BF; }}
+
 /* Таблицы */
 QTableWidget {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px;

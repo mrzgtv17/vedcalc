@@ -14,7 +14,7 @@ from decimal import Decimal
 from vedcalc.core.costing import CostResult, ItemCost
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_rate
 from vedcalc.core.models import Item, PriceMode, Shipment
-from vedcalc.core.money import ZERO, ceil_money, pct, round_money
+from vedcalc.core.money import ZERO, pct, round_money
 from vedcalc.core.pricing import ItemPrice, PriceResult
 
 ONE = Decimal(1)
@@ -52,15 +52,15 @@ class UnitPrice:
 
 
 @dataclass(frozen=True, slots=True)
-class UnitView:
+class UnitCostView:
+    """Себестоимость позиции в пересчёте на 1 шт, 1 кг или 1 т (как задано в позиции)."""
+
     name: str
     quantity: Decimal
     unit_label: str
     cost_net: Decimal  # себестоимость единицы без НДС (при УСН — с НДС)
     deductible_vat: Decimal  # НДС к вычету на единицу
     cost_lines: tuple[UnitLine, ...]
-    break_even: UnitPrice
-    target: UnitPrice | None
 
     @property
     def per(self) -> str:
@@ -69,6 +69,23 @@ class UnitView:
     @property
     def cost_gross(self) -> Decimal:
         return self.cost_net + self.deductible_vat
+
+
+@dataclass(frozen=True, slots=True)
+class UnitPriceView:
+    """Цена и прибыль позиции на 1 шт / кг / т по выбранному сценарию."""
+
+    name: str
+    quantity: Decimal
+    unit_label: str
+    cost_net: Decimal
+    deductible_vat: Decimal
+    financing: Decimal  # стоимость денег на единицу
+    price: UnitPrice
+
+    @property
+    def per(self) -> str:
+        return f"за 1 {self.unit_label}"
 
 
 def _cost_lines(
@@ -232,18 +249,18 @@ def _cost_lines(
     return tuple(lines), cost_net, ZERO
 
 
-def _price(cost: CostResult, cost_u: Decimal, price_u: Decimal, price_formula: str) -> UnitPrice:
-    sale = cost.sale
-    vat_payer = cost.tax_regime.vat_payer
+def _price(basis, cost_u: Decimal, fin_u: Decimal, price_u: Decimal, formula: str) -> UnitPrice:
+    sale = basis.sale
+    vat_payer = basis.tax_regime.vat_payer
     v = sale.vat_rate if vat_payer else ZERO
     r = sale.price_dependent_rate
     vat = round_money(price_u * pct(v))
     dependent = round_money(price_u * pct(r))
-    gross = price_u - cost_u - dependent
+    gross = price_u - cost_u - dependent - fin_u
     tax = round_money(max(ZERO, gross) * pct(sale.profit_tax_rate))
     net = gross - tax
 
-    lines = [UnitLine("Цена без НДС", price_formula, price_u, strong=True)]
+    lines = [UnitLine("Цена без НДС", formula, price_u, strong=True)]
     if vat_payer:
         lines += [
             UnitLine(f"НДС {fmt_rate(v)}", f"{fmt_money(price_u)} × {fmt_rate(v)}", vat),
@@ -251,14 +268,31 @@ def _price(cost: CostResult, cost_u: Decimal, price_u: Decimal, price_formula: s
                 "Цена с НДС", f"{fmt_money(price_u)} + {fmt_money(vat)}", price_u + vat, strong=True
             ),
         ]
+    lines.append(
+        UnitLine(
+            "Себестоимость" + (" без НДС" if vat_payer else ""),
+            "из расчёта себестоимости",
+            cost_u,
+            informational=True,
+        )
+    )
+    if fin_u:
+        lines.append(
+            UnitLine(
+                "Стоимость денег",
+                "доля процентов за партию на единицу",
+                fin_u,
+                hint="Проценты за деньги, вложенные в партию до оплаты покупателем",
+            )
+        )
     if dependent:
         lines.append(
             UnitLine("Расходы от выручки", f"{fmt_money(price_u)} × {fmt_rate(r)}", dependent)
         )
-    dep_txt = f" − {fmt_money(dependent)}" if dependent else ""
+    minus = "".join(f" − {fmt_money(x)}" for x in (dependent, fin_u) if x)
     tax_label = "Налог на прибыль" if vat_payer else "Налог УСН"
     lines += [
-        UnitLine("Валовая прибыль", f"{fmt_money(price_u)} − {fmt_money(cost_u)}{dep_txt}", gross),
+        UnitLine("Валовая прибыль", f"{fmt_money(price_u)} − {fmt_money(cost_u)}{minus}", gross),
         UnitLine(
             tax_label,
             f"max(0; {fmt_money(gross)}) × {fmt_rate(sale.profit_tax_rate)}",
@@ -269,64 +303,58 @@ def _price(cost: CostResult, cost_u: Decimal, price_u: Decimal, price_formula: s
     return UnitPrice(price_u, vat, dependent, gross, tax, net, tuple(lines))
 
 
-def _break_even(cost: CostResult, cost_u: Decimal) -> UnitPrice:
-    r = pct(cost.sale.price_dependent_rate)
-    if r:
-        price = ceil_money(cost_u / (ONE - r))
-        formula = f"{fmt_money(cost_u)} / (1 − {fmt_rate(cost.sale.price_dependent_rate)})"
-    else:
-        price, formula = cost_u, "= себестоимость без НДС"
-    result = _price(cost, cost_u, price, formula)
-    # Округление расходов от выручки может съесть копейку — добираем её.
-    while result.net_profit < 0:
-        price += Decimal("0.01")
-        result = _price(cost, cost_u, price, formula)
-    return result
-
-
-def _target(cost: CostResult, cost_u: Decimal, ip: ItemPrice) -> UnitPrice:
-    sale = cost.sale
+def _target(basis, cost_u: Decimal, fin_u: Decimal, ip: ItemPrice) -> UnitPrice:
+    sale = basis.sale
     mode, value = sale.target_mode, sale.target_value
     r = sale.price_dependent_rate
+    full = cost_u + fin_u
+    full_txt = f"({fmt_money(cost_u)} + {fmt_money(fin_u)})" if fin_u else fmt_money(cost_u)
     r_txt = f" / (1 − {fmt_rate(r)})" if r else ""
     if mode is PriceMode.MARKUP:
-        price = round_money(cost_u * (ONE + pct(value)) / (ONE - pct(r)))
-        formula = f"{fmt_money(cost_u)} × (1 + {fmt_rate(value)}){r_txt}"
+        price = round_money(full * (ONE + pct(value)) / (ONE - pct(r)))
+        formula = f"{full_txt} × (1 + {fmt_rate(value)}){r_txt}"
     elif mode is PriceMode.MARGIN:
-        price = round_money(cost_u / (ONE - pct(value) - pct(r)))
+        price = round_money(full / (ONE - pct(value) - pct(r)))
         r_part = f" − {fmt_rate(r)}" if r else ""
-        formula = f"{fmt_money(cost_u)} / (1 − {fmt_rate(value)}{r_part})"
+        formula = f"{full_txt} / (1 − {fmt_rate(value)}{r_part})"
     elif mode is PriceMode.UNIT_PRICE:
         price, formula = round_money(value), "задана"
     else:
         # Цена партии или целевая прибыль партии: доля позиции на единицу
         price = round_money(ip.price_net / ip.quantity)
-        if len(cost.items) == 1:
+        if len(basis.items) == 1:
             formula = f"цена партии {fmt_money(ip.price_net)} / {fmt_number(ip.quantity)}"
         else:
             formula = "доля цены партии пропорционально себестоимости позиции"
-    return _price(cost, cost_u, price, formula)
+    return _price(basis, cost_u, fin_u, price, formula)
 
 
-def unit_views(
-    shipment: Shipment,
-    cost: CostResult,
-    break_even: PriceResult,
-    target: PriceResult | None,
-) -> list[UnitView]:
+def unit_cost_views(shipment: Shipment, cost: CostResult) -> list[UnitCostView]:
     views = []
-    for k, (it, src) in enumerate(zip(cost.items, shipment.items, strict=True)):
+    for it, src in zip(cost.items, shipment.items, strict=True):
         lines, cost_u, deductible = _cost_lines(cost, it, src)
+        views.append(UnitCostView(it.name, it.quantity, it.unit.label, cost_u, deductible, lines))
+    return views
+
+
+def unit_price_views(
+    basis, target: PriceResult, unit_costs: list[Decimal] | None = None
+) -> list[UnitPriceView]:
+    """Цены на единицу. unit_costs — себестоимость единицы из карточек импорта (чтобы цифры
+    на вкладках совпадали до копейки); без неё — себестоимость позиции / количество."""
+    views = []
+    for k, (it, ip) in enumerate(zip(basis.items, target.items, strict=True)):
+        cost_u = unit_costs[k] if unit_costs else round_money(it.cost_net / it.quantity)
+        fin_u = round_money(ip.financing / it.quantity)
         views.append(
-            UnitView(
+            UnitPriceView(
                 name=it.name,
                 quantity=it.quantity,
                 unit_label=it.unit.label,
                 cost_net=cost_u,
-                deductible_vat=deductible,
-                cost_lines=lines,
-                break_even=_break_even(cost, cost_u),
-                target=_target(cost, cost_u, target.items[k]) if target else None,
+                deductible_vat=round_money(it.deductible_vat / it.quantity),
+                financing=fin_u,
+                price=_target(basis, cost_u, fin_u, ip),
             )
         )
     return views

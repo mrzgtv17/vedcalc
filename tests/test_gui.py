@@ -8,10 +8,16 @@ import pytest
 pytest.importorskip("PySide6")
 
 from conftest import TEST_RATES, StaticRates
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QLabel, QMessageBox
 
 from vedcalc.core.fx import FxError
-from vedcalc.core.models import PriceMode, TaxRegime
+from vedcalc.core.models import (
+    DeliveryMode,
+    FinancingMode,
+    PriceMode,
+    PricingSource,
+    TaxRegime,
+)
 from vedcalc.core.units import Unit
 from vedcalc.gui.main_window import MainWindow
 
@@ -53,28 +59,53 @@ def test_new_calculation_shows_hints_not_errors(window):
     assert not window.pdf_action.isEnabled()
 
 
+def pricing(w):
+    w.tabs.setCurrentWidget(w.pricing)
+    w.pricing.recalc()
+    return w.pricing.results
+
+
 def test_control_example_on_screen(example):
     r = results(example)
     (card,) = r.unit_cards
-    # Главное — экономика единицы товара
+    # Вкладка «Импорт» — себестоимость единицы, безубыточной цены больше нет
     assert card.view.per == "за 1 шт"
     assert card.metric_text("cost") == money("147 731,00")
-    assert card.metric_text("break_even") == money("147 731,00")
-    assert card.metric_text("target") == money("200 000,00")
+    assert card.metric_text("vat") == money("30 030,00")
+    assert "break_even" not in card.tiles
     assert card.line_text("Таможенная стоимость") == money("130 000,00")
     assert card.line_text("Таможенный сбор") == money("1 231,00")
     assert card.line_text("Ввозная пошлина") == money("6 500,00")
     assert card.line_text("НДС при ввозе") == money("30 030,00")
-    assert card.price_text("Безубыточная", "Цена с НДС") == money("180 231,82")
-    # В файле примера сохранён сценарий «продажа партии за 200 000»
-    assert card.price_text("По сценарию", "Чистая прибыль") == money("39 201,75")
-    assert "35,38%" in r.target_summary.text() and "26,13%" in r.target_summary.text()
-    # Итоги партии — ниже
     assert r.batch_view.value_text("Себестоимость партии без НДС") == money("147 731,00")
-    assert r.batch_view.value_text("НДС-разрыв при P = C") == money("2 470,82")
-    assert "Себестоимость за 1 шт" in r.details.toPlainText()
-    assert "Расчёт по партии" in r.details.toPlainText()
+    assert r.batch_view.value_text("НДС-разрыв при P = C") is None
+    text = r.details.toPlainText()
+    assert "Себестоимость за 1 шт" in text and "Безубыточная" not in text
     assert example.pdf_action.isEnabled()
+
+
+def test_pricing_tab_uses_import_cost(example):
+    r = pricing(example)
+    (card,) = r.unit_cards
+    # В файле примера сохранён сценарий «продажа партии за 200 000»
+    assert card.metric_text("cost") == money("147 731,00")
+    assert card.metric_text("price") == money("200 000,00")
+    assert card.metric_text("profit") == money("39 201,75")
+    assert "35,38%" in r.target_summary.text() and "26,13%" in r.target_summary.text()
+    assert r.batch_view.value_text("Цена партии с НДС") == money("244 000,00")
+    assert not r.financing_view.isVisible()
+    assert example.pdf_action.isEnabled()
+
+
+def test_pricing_follows_import_changes(example, qtbot):
+    pricing(example)
+    row(example, "quantity").setText("4")
+    row(example, "unit").set_value(Unit.KG)
+    example.calculator.recalc()
+    qtbot.waitUntil(lambda: example.pricing.report.basis.items[0].quantity == 4, timeout=2000)
+    (card,) = example.pricing.results.unit_cards
+    assert card.view.per == "за 1 кг"
+    assert card.metric_text("cost") == money("115 990,50")
 
 
 def test_unit_cards_follow_quantity_and_unit(example):
@@ -88,13 +119,69 @@ def test_unit_cards_follow_quantity_and_unit(example):
 
 
 def test_unit_price_mode_in_gui(example):
-    r = results(example)
+    r = pricing(example)
     r.mode_combo.set_value(PriceMode.UNIT_PRICE)
     r.value_edit.setText("160000")
-    example.calculator.recalc()
+    example.pricing.recalc()
     (card,) = r.unit_cards
-    assert card.metric_text("target") == money("160 000,00")
+    assert card.metric_text("price") == money("160 000,00")
     assert "за 1 шт" in r.target_summary.text()
+
+
+def test_cost_of_money_in_gui(example):
+    tab = example.pricing
+    r = pricing(example)
+    r.mode_combo.set_value(PriceMode.MARKUP)
+    r.value_edit.setText("20")
+    tab.fin_mode.set_value(FinancingMode.SIMPLE)
+    tab.fin_rate.setText("20")
+    tab.fin_days.setText("60")
+    tab.recalc()
+    assert tab.report.target.financing == D("5844.20")
+    assert r.unit_cards[0].metric_text("price") == money("184 290,24")
+    assert r.financing_view.value_text("Стоимость денег за партию") == money("5 844,20")
+    tab.fin_mode.set_value(FinancingMode.SCHEDULE)
+    tab.recalc()
+    assert tab.report.target.financing_detail.periods  # график посчитан
+    assert "Деньги в обороте" in r.details.toPlainText() or r.financing_view.isVisible()
+    # Параметры стоимости денег сохраняются в файле расчёта
+    saved = example.calculator.shipment()
+    assert saved.financing.mode is FinancingMode.SCHEDULE
+
+
+def test_manual_cost_in_pricing_tab(example):
+    tab = example.pricing
+    tab.source_combo.set_value(PricingSource.MANUAL)
+    tab.m_name.setText("Стеарин")
+    tab.m_qty.setText("1000")
+    tab.m_unit.set_value(Unit.KG)
+    tab.m_cost.setText("150,5")
+    tab.m_vat.setText("33")
+    r = pricing(example)
+    r.mode_combo.set_value(PriceMode.UNIT_PRICE)
+    r.value_edit.setText("200")
+    tab.recalc()
+    (card,) = r.unit_cards
+    assert card.view.per == "за 1 кг"
+    assert card.metric_text("cost") == money("150,50")
+    assert tab.report.target.gross_profit == D("49500.00")
+
+
+def test_container_load_hint(example):
+    form = example.calculator.form
+    form.delivery_combo.set_value(DeliveryMode.DC20)
+    row(example, "gross").setText("30000")
+    row(example, "volume").setText("20")
+    example.calculator.recalc()
+    card = results(example).load_card
+    assert card is not None
+    assert card.bar_text("volume").startswith("60%")
+    assert card.bar_text("weight").startswith("111%")
+    warning = card.findChild(QLabel, "loadWarning")
+    assert warning and "не помещается" in warning.text() and "2" in warning.text()
+    form.delivery_combo.set_value(DeliveryMode.AIR)
+    example.calculator.recalc()
+    assert results(example).load_card is None
 
 
 def test_editing_recalculates_on_the_fly(example, qtbot):
@@ -128,28 +215,29 @@ def test_invalid_input_is_highlighted(example):
 
 
 def test_price_modes(example):
-    r = results(example)
+    r = pricing(example)
     r.mode_combo.set_value(PriceMode.MARGIN)
     r.value_edit.setText("25")
-    example.calculator.recalc()
-    assert r.unit_cards[0].metric_text("target") == money("196 974,67")
+    example.pricing.recalc()
+    assert r.unit_cards[0].metric_text("price") == money("196 974,67")
     assert r.target_summary.text().startswith("Цена с маржинальностью 25%")
 
     r.value_edit.setText("100")
-    example.calculator.recalc()
+    example.pricing.recalc()
     assert "меньше 100%" in r.target_error.text()
-    assert example.calculator.report is not None  # остальные блоки считаются
+    assert example.calculator.report is not None  # себестоимость считается
 
 
 def test_usn_regime(example):
     form = example.calculator.form
     form.regime_combo.set_value(TaxRegime.USN_INCOME_MINUS_EXPENSES)
     example.calculator.recalc()
-    assert not form.sale_vat.isEnabled()
-    assert form.profit_tax.text() == "15"
-    report = example.calculator.report
-    assert report.cost.cost_net == D("177761.00")
-    assert report.break_even.sale_vat == 0
+    tab = example.pricing
+    assert not tab.sale_vat.isEnabled()
+    assert tab.profit_tax.text() == "15"
+    assert example.calculator.report.cost.cost_net == D("177761.00")
+    pricing(example)
+    assert tab.report.target.sale_vat == 0
 
 
 def test_manual_rate(example):
@@ -196,6 +284,13 @@ def test_exports(example, tmp_path):
     ws = load_workbook(xlsx)["Итоги"]
     values = {ws.cell(r, 1).value: ws.cell(r, 2).value for r in range(1, ws.max_row + 1)}
     assert values["Себестоимость партии без НДС"] == 147731
+    assert "Чистая прибыль" not in values  # на вкладке «Импорт» — только себестоимость
+    # С вкладки «Цена продажи» — цена и прибыль
+    pricing(example)
+    example.export_pdf(pdf)
+    example.export_xlsx(xlsx)
+    ws = load_workbook(xlsx)["Итоги"]
+    values = {ws.cell(r, 1).value: ws.cell(r, 2).value for r in range(1, ws.max_row + 1)}
     assert values["Чистая прибыль"] == 39201.75
 
 
