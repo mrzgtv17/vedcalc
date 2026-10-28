@@ -93,7 +93,13 @@ class Requisites:
         return path if path is not None and path.is_file() else None
 
 
+DATA_DIR_ENV = "VEDCALC_DATA_DIR"  # другая папка данных (тесты)
+
+
 def requisites_dir() -> Path:
+    """Папка данных программы на этом Mac: реквизиты, автосохранение."""
+    if os.environ.get(DATA_DIR_ENV):
+        return Path(os.environ[DATA_DIR_ENV])
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:

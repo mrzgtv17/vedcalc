@@ -41,6 +41,7 @@ from vedcalc.core.offer import (
     suggested_payment_terms,
 )
 from vedcalc.core.report import PriceReport
+from vedcalc.gui.prefs import app_settings
 from vedcalc.gui.widgets import EnumCombo
 
 IMAGE_FILTER = "Изображения (*.png *.jpg *.jpeg)"
@@ -178,7 +179,7 @@ class OfferDialog(QDialog):
         self.report = report
         self.base_name = base_name or report.title
         self.directory = directory
-        self.settings = settings or QSettings("vedcalc", "vedcalc")
+        self.settings = settings or app_settings()
         self.requisites = load_requisites(directory)
         cost = report.cost_report
         self.tnved_codes = [i.tnved_code for i in cost.shipment.items] if cost else None

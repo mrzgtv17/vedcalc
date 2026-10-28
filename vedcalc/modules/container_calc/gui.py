@@ -167,6 +167,11 @@ class ContainerCard(QFrame):
         v.addLayout(legend)
 
 
+DEFAULT_KIND = CargoKind("Коробка", 600, 400, 400, Decimal(18), 100)
+TEXT_KEYS = ("name", "length", "width", "height", "weight", "quantity", "layers")
+CHECK_KEYS = ("tip", "stack")
+
+
 class _Signals(QObject):
     compared = Signal(int, object)  # номер запроса, список PackingResult или ошибка
 
@@ -174,8 +179,11 @@ class _Signals(QObject):
 class ContainerTab(QWidget):
     """Отдельный модуль: не связан с расчётом импорта."""
 
+    modified = Signal()  # пользователь изменил ввод — проект нужно сохранить
+
     def __init__(self, *, threaded: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
+        self._loading = False
         self.specs = load_containers()
         self.result: PackingResult | None = None
         self.comparison: list[PackingResult] | None = None
@@ -264,7 +272,9 @@ class ContainerTab(QWidget):
         self._timer.timeout.connect(self.recalc)
         self.spec_combo.currentIndexChanged.connect(self._on_changed)
 
-        self.add_kind(CargoKind("Коробка", 600, 400, 400, Decimal(18), 100))
+        self._loading = True
+        self.add_kind(DEFAULT_KIND)
+        self._loading = False
         self.recalc()
 
     @staticmethod
@@ -347,7 +357,45 @@ class ContainerTab(QWidget):
 
     def _on_changed(self, *_args) -> None:
         self.add_button.setEnabled(len(self.table.rows) < MAX_KINDS)
+        if not self._loading:
+            self.modified.emit()
         self._timer.start()
+
+    # --- файл проекта -----------------------------------------------------------------
+
+    def save_state(self) -> dict:
+        """Ввод как есть (строки полей) — сохраняется и с ошибками, как набрал пользователь."""
+        kinds = []
+        for row in self.table.rows:
+            kind = {key: row[key].text() for key in TEXT_KEYS}
+            kind |= {key: row[key].isChecked() for key in CHECK_KEYS}
+            kinds.append(kind)
+        return {"container": self.spec_combo.value(), "kinds": kinds}
+
+    def load_state(self, state: dict | None) -> None:
+        """Состояние из файла проекта; None — значения по умолчанию (новый расчёт)."""
+        self._loading = True
+        try:
+            self.table.clear_rows()
+            state = state or {}
+            code = state.get("container", "40HC")
+            self.spec_combo.blockSignals(True)
+            self.spec_combo.set_value(code if code in self.specs else "40HC")
+            self.spec_combo.blockSignals(False)
+            kinds = [k for k in state.get("kinds") or [] if isinstance(k, dict)][:MAX_KINDS]
+            if not kinds:
+                self.add_kind(DEFAULT_KIND)
+            for kind in kinds:
+                self.add_kind()
+                row = self.table.rows[-1]
+                for key in TEXT_KEYS:
+                    row[key].setText(str(kind.get(key) or ""))
+                for key in CHECK_KEYS:
+                    row[key].setChecked(bool(kind.get(key, key == "stack")))
+            self.add_button.setEnabled(len(self.table.rows) < MAX_KINDS)
+        finally:
+            self._loading = False
+        self.recalc()
 
     def spec(self) -> ContainerSpec:
         return self.specs[self.spec_combo.value()]

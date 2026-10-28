@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import resources
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
@@ -13,13 +14,18 @@ from vedcalc.core.fx import RateProvider
 from vedcalc.core.io import (
     FileFormatError,
     duplicate_shipment,
-    load_shipment,
-    save_shipment,
-    shipment_from_dict,
+    load_project,
+    project_from_dict,
+    project_to_dict,
+    read_json,
+    save_project,
+    write_json,
 )
+from vedcalc.core.offer import requisites_dir
 from vedcalc.core.validation import InputError
 from vedcalc.gui.calculator import CalculatorTab
 from vedcalc.gui.form import PricingState, new_shipment
+from vedcalc.gui.prefs import app_settings
 from vedcalc.gui.pricing_tab import PricingTab
 from vedcalc.gui.theme import apply_theme
 from vedcalc.gui.updates import UpdateController
@@ -28,6 +34,12 @@ from vedcalc.modules.registry import ModuleSpec, modules
 
 FILE_FILTER = "Расчёт ВЭД (*.vedcalc.json *.json)"
 APP_TITLE = "Калькулятор ВЭД"
+MAX_RECENT = 10
+AUTOSAVE_MS = 60_000  # копия несохранённого расчёта — раз в минуту
+
+
+def autosave_path() -> Path:
+    return requisites_dir() / "recovery" / "autosave.vedcalc.json"
 
 
 class MainWindow(QMainWindow):
@@ -58,12 +70,24 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.pricing, "Цена продажи")
         self.tabs.currentChanged.connect(self._update_actions)
         specs = extra_modules if extra_modules is not None else builtin_modules() + modules()
+        # Вкладки-модули с save_state/load_state сохраняются в файл проекта
+        self.module_tabs: dict[str, object] = {}
         for spec in sorted(specs, key=lambda m: m.order):
-            self.tabs.addTab(spec.factory(), spec.title)
+            tab = spec.factory()
+            self.tabs.addTab(tab, spec.title)
+            if hasattr(tab, "save_state") and hasattr(tab, "load_state"):
+                self.module_tabs[spec.id] = tab
+            if hasattr(tab, "modified"):
+                tab.modified.connect(self._mark_dirty)
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
         self.setCentralWidget(self.tabs)
 
+        self.settings = app_settings()
         self._build_menu()
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(AUTOSAVE_MS)
+        self._autosave_timer.timeout.connect(self.autosave)
+        self._autosave_timer.start()
         self.pricing.reportChanged.connect(self._update_actions)
         self.pricing.offerRequested.connect(self.commercial_offer)
         self.resize(1360, 860)
@@ -86,6 +110,8 @@ class MainWindow(QMainWindow):
         m = self.menuBar().addMenu("Файл")
         m.addAction(self._action("Новый расчёт", self.new_file, QKeySequence.StandardKey.New))
         m.addAction(self._action("Открыть…", self.open_file, QKeySequence.StandardKey.Open))
+        self.recent_menu = m.addMenu("Открыть последние")
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         m.addAction(self._action("Открыть контрольный пример", self.open_example))
         m.addSeparator()
         m.addAction(self._action("Сохранить", self.save, QKeySequence.StandardKey.Save))
@@ -135,12 +161,18 @@ class MainWindow(QMainWindow):
             return self.calculator.report
         return None
 
-    def _load(self, shipment, path: Path | None) -> None:
+    def _load(self, shipment, path: Path | None, modules: dict[str, dict] | None = None) -> None:
         self.calculator.set_shipment(shipment)
         self.pricing.set_state(PricingState.from_shipment(shipment))
+        for module_id, tab in self.module_tabs.items():
+            tab.load_state((modules or {}).get(module_id))
         self.path = path
         self.dirty = False
         self._update_title()
+        self.discard_autosave()
+
+    def module_states(self) -> dict[str, dict]:
+        return {module_id: tab.save_state() for module_id, tab in self.module_tabs.items()}
 
     def _confirm_discard(self) -> bool:
         if not self.dirty:
@@ -175,9 +207,13 @@ class MainWindow(QMainWindow):
                 return
             path = Path(name)
         try:
-            self._load(load_shipment(path), path)
+            shipment, states = load_project(path)
         except (OSError, FileFormatError) as exc:
             self._error(f"Не удалось открыть файл:\n{exc}")
+            self._forget_recent(path)
+            return
+        self._load(shipment, path, states)
+        self._remember_recent(path)
 
     def open_example(self) -> None:
         if not self._confirm_discard():
@@ -185,7 +221,7 @@ class MainWindow(QMainWindow):
         import json
 
         text = resources.files("vedcalc.data").joinpath("control_example.vedcalc.json")
-        self._load(shipment_from_dict(json.loads(text.read_text("utf-8"))), None)
+        self._load(*project_from_dict(json.loads(text.read_text("utf-8"))), None)
 
     def _current(self):
         try:
@@ -217,13 +253,15 @@ class MainWindow(QMainWindow):
         if shipment is None:
             return False
         try:
-            save_shipment(shipment, path)
+            save_project(shipment, self.module_states(), path)
         except OSError as exc:
             self._error(f"Не удалось сохранить файл:\n{exc}")
             return False
         self.path = path
         self.dirty = False
         self._update_title()
+        self._remember_recent(path)
+        self.discard_autosave()
         self.statusBar().showMessage(f"Сохранено: {path}", 4000)
         return True
 
@@ -231,10 +269,98 @@ class MainWindow(QMainWindow):
         shipment = self._current()
         if shipment is None or not self._confirm_discard():
             return
-        self._load(duplicate_shipment(shipment), None)
+        self._load(duplicate_shipment(shipment), None, self.module_states())
         self.dirty = True
         self._update_title()
         self.statusBar().showMessage("Создана копия расчёта — сохраните её под новым именем", 5000)
+
+    # --- последние файлы ----------------------------------------------------------------
+
+    def recent_files(self) -> list[Path]:
+        raw = self.settings.value("recent_files", []) or []
+        if isinstance(raw, str):  # QSettings возвращает строку, если в списке один элемент
+            raw = [raw]
+        return [Path(p) for p in raw]
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        self.settings.setValue("recent_files", [str(p) for p in paths[:MAX_RECENT]])
+
+    def _remember_recent(self, path: Path) -> None:
+        path = path.resolve()
+        self._set_recent([path] + [p for p in self.recent_files() if p != path])
+
+    def _forget_recent(self, path: Path) -> None:
+        self._set_recent([p for p in self.recent_files() if p != path.resolve()])
+
+    def _fill_recent_menu(self) -> None:
+        self.recent_menu.clear()
+        paths = [p for p in self.recent_files() if p.is_file()]
+        for path in paths:
+            action = self.recent_menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda _=False, p=path: self.open_file(p))
+        if paths:
+            self.recent_menu.addSeparator()
+            self.recent_menu.addAction(
+                self._action("Очистить список", lambda: self._set_recent([]))
+            )
+        else:
+            self.recent_menu.addAction("Нет недавних файлов").setEnabled(False)
+
+    # --- автосохранение ---------------------------------------------------------------
+
+    def autosave(self) -> bool:
+        """Копия несохранённого расчёта в папке программы — на случай сбоя.
+
+        Сам файл пользователя не трогаем: он сохраняется только по ⌘S.
+        """
+        if not self.dirty:
+            return False
+        try:
+            shipment = self.calculator.shipment()
+        except InputError:
+            return False  # ввод с ошибками — оставляем прошлую копию
+        data = project_to_dict(shipment, self.module_states())
+        data["recovery"] = {"path": str(self.path) if self.path else None}
+        target = autosave_path()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_json(data, target)
+        except OSError:
+            return False
+        return True
+
+    def discard_autosave(self) -> None:
+        autosave_path().unlink(missing_ok=True)
+
+    def offer_recovery(self) -> bool:
+        """При запуске: если осталась копия после сбоя — предложить восстановить."""
+        target = autosave_path()
+        if not target.is_file():
+            return False
+        try:
+            data = read_json(target)
+            shipment, states = project_from_dict(data)
+        except (OSError, FileFormatError):
+            self.discard_autosave()
+            return False
+        original = (data.get("recovery") or {}).get("path")
+        where = f"«{Path(original).name}»" if original else "новый расчёт"
+        answer = QMessageBox.question(
+            self,
+            APP_TITLE,
+            f"Программа закрылась, не сохранив изменения ({where}).\n"
+            "Восстановить несохранённый расчёт?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.discard_autosave()
+            return False
+        self._load(shipment, Path(original) if original else None, states)
+        self.dirty = True
+        self._update_title()
+        self.autosave()  # копия нужна, пока восстановленное не сохранено
+        return True
 
     # --- экспорт ----------------------------------------------------------------------
 
@@ -325,6 +451,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():
+            self.discard_autosave()  # изменения сохранены или отброшены осознанно
             event.accept()
         else:
             event.ignore()
