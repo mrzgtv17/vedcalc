@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
 from vedcalc.gui.theme import ERROR_BOX, WARN_BOX
 from vedcalc.gui.widgets import DecimalEdit, EnumCombo, mark_error
+from vedcalc.modules.wb_unit.api import Fetch, TokenStore, http_fetch
+from vedcalc.modules.wb_unit.api_gui import WbApiBox
 from vedcalc.modules.wb_unit.calc import (
     Scheme,
     Target,
@@ -81,9 +83,20 @@ def _tile(caption: str, value: str, sub: str, accent: bool = False) -> tuple[QFr
 class WbTab(QWidget):
     modified = Signal()  # пользователь изменил ввод — проект нужно сохранить
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        token_store: TokenStore | None = None,
+        fetch: Fetch = http_fetch,
+        threaded: bool = True,
+    ):
         super().__init__(parent)
         self._loading = False
+        self.api_box = WbApiBox(store=token_store, fetch=fetch, threaded=threaded)
+        self.api_box.commissionPicked.connect(self._apply_subject)
+        self.api_box.warehousePicked.connect(self._apply_warehouse)
+        self.api_box.selectionChanged.connect(self._changed)
         self.tariffs = load_tariffs()
         self.result: WbResult | None = None
         self.schemes: dict[Scheme, WbResult] = {}
@@ -93,6 +106,7 @@ class WbTab(QWidget):
         fv = QVBoxLayout(form)
         fv.setContentsMargins(0, 0, 0, 0)
         fv.addWidget(self._build_product())
+        fv.addWidget(self.api_box)
         fv.addWidget(self._build_price())
         fv.addWidget(self._build_scheme())
         fv.addWidget(self._build_logistics())
@@ -213,7 +227,7 @@ class WbTab(QWidget):
     def _build_scheme(self) -> QGroupBox:
         box, form = _box("Схема и комиссия")
         self.scheme_combo = EnumCombo([(s, s.label) for s in Scheme])
-        self.scheme_combo.currentIndexChanged.connect(self._changed)
+        self.scheme_combo.currentIndexChanged.connect(self._on_scheme)
         form.addRow("Схема", self.scheme_combo)
         self._num("commission_fbo_pct", form, "Комиссия FBO, %", "Из кабинета: по категории")
         self._num("commission_fbs_pct", form, "Комиссия FBS, %", "Из кабинета: по категории")
@@ -262,6 +276,15 @@ class WbTab(QWidget):
         self._num("first_liter", form, "Первый литр, ₽")
         self._num("extra_liter", form, "Доп. литр, ₽")
         self._num("storage_per_liter_day", form, "Хранение, ₽ за литр в день")
+        self._num(
+            "storage_first_liter",
+            form,
+            "Хранение, первый литр, ₽ в день",
+            "Из тарифов склада WB; пусто — каждый литр по тарифу выше",
+            optional=True,
+        )
+        self._num("storage_coef_pct", form, "Коэффициент хранения, %",
+                  "Из тарифов склада WB; пусто — коэффициент склада", optional=True)  # fmt: skip
         tiers = " · ".join(f"до {fmt_number(u)} л — {fmt_money(r)}" for u, r in t.small_tiers)
         small = _label(f"До 1 литра: {tiers} ₽", "caption")
         small.setWordWrap(True)
@@ -287,6 +310,8 @@ class WbTab(QWidget):
             "first_liter": inp.first_liter or t.first_liter,
             "extra_liter": inp.extra_liter or t.extra_liter,
             "storage_per_liter_day": inp.storage_per_liter_day or t.storage_per_liter_day,
+            "storage_first_liter": inp.storage_first_liter,
+            "storage_coef_pct": inp.storage_coef_pct,
         }  # fmt: skip
         for w in (*self._fields.values(), self.name_edit, self.target_combo, self.scheme_combo,
                   self.tax_combo):  # fmt: skip
@@ -343,6 +368,8 @@ class WbTab(QWidget):
             target=target, target_value=values.get("target_value", Decimal(0)),
             first_liter=values["first_liter"], extra_liter=values["extra_liter"],
             storage_per_liter_day=values["storage_per_liter_day"],
+            storage_first_liter=values["storage_first_liter"],
+            storage_coef_pct=values["storage_coef_pct"],
         )  # fmt: skip
         return inp, []
 
@@ -352,6 +379,31 @@ class WbTab(QWidget):
         if not self._loading:
             self.modified.emit()
         self._timer.start()
+
+    # --- тарифы WB по API -------------------------------------------------------------
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.api_box.auto_refresh()
+
+    def _set_fields(self, values: dict) -> None:
+        for key, value in values.items():
+            if value is not None:
+                self._fields[key].set_value(value)
+
+    def _apply_subject(self, subject) -> None:
+        self._set_fields({"commission_fbo_pct": subject.fbo_pct,
+                          "commission_fbs_pct": subject.fbs_pct})  # fmt: skip
+
+    def _apply_warehouse(self, warehouse) -> None:
+        fbs = self.scheme_combo.value() is Scheme.FBS and warehouse.has_fbs()
+        self._set_fields(warehouse.tariff_fields(fbs))
+
+    def _on_scheme(self, *_args) -> None:
+        # У FBS свои тарифы логистики склада — подставляем при смене схемы
+        if not self._loading and (warehouse := self.api_box.current_warehouse()):
+            self._apply_warehouse(warehouse)
+        self._changed()
 
     # --- файл проекта -------------------------------------------------------------------
 
@@ -363,6 +415,8 @@ class WbTab(QWidget):
             "scheme": self.scheme_combo.value().value,
             "tax_mode": self.tax_combo.value().value,
             "fields": {key: edit.text() for key, edit in self._fields.items()},
+            "wb_subject": self.api_box.selected_subject_title(),
+            "wb_warehouse": self.api_box.selected_warehouse_name(),
         }
 
     def load_state(self, state: dict | None) -> None:
@@ -370,8 +424,12 @@ class WbTab(QWidget):
         self._loading = True
         try:
             self.set_input(WbInput())
+            self.api_box.set_selection("", "")
             if not state:
                 return
+            self.api_box.set_selection(
+                str(state.get("wb_subject") or ""), str(state.get("wb_warehouse") or "")
+            )
             combos = ((self.target_combo, Target, "target"), (self.scheme_combo, Scheme, "scheme"),
                       (self.tax_combo, TaxMode, "tax_mode"))  # fmt: skip
             widgets = [*self._fields.values(), self.name_edit, *(c for c, _, _ in combos)]

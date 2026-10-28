@@ -39,6 +39,12 @@ def _smoke_test(window: MainWindow, app: QApplication, png_path: str) -> None:
             write_offer_pdf(offer, base.with_suffix(".kp.pdf"))
             write_offer_docx(offer, base.with_suffix(".kp.docx"))
             ok = base.with_suffix(".kp.docx").stat().st_size > 1000
+            # Связка ключей для токена WB доступна в сборке (сам токен не читаем)
+            import keyring
+
+            backend = type(keyring.get_keyring()).__module__
+            print(f"keyring: {backend}")
+            ok = ok and backend.endswith("macOS")
         else:
             ok = False
         print(f"smoke test: {'OK' if ok else 'FAILED'}, C = {report and report.cost.cost_net}")
