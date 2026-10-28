@@ -149,6 +149,9 @@ class WbInput:
     first_liter: Decimal | None = None
     extra_liter: Decimal | None = None
     storage_per_liter_day: Decimal | None = None
+    # Тарифы склада из API WB: хранение «первый литр + доп. литр» и свой коэффициент
+    storage_first_liter: Decimal | None = None
+    storage_coef_pct: Decimal | None = None  # None — коэффициент склада
 
 
 class WbInputError(ValueError):
@@ -272,9 +275,19 @@ def evaluate(inp: WbInput, base: Tariffs | None = None, retail_price: Decimal | 
     reverse = round_money(base_tariff)
     orders = ONE / b
     logistics = round_money(forward * orders + reverse * (orders - ONE))
-    storage = (
-        round_money(liters * t.storage_per_liter_day * coef * inp.storage_days) if fbo else ZERO
+    storage_coef_pct = (
+        inp.storage_coef_pct if inp.storage_coef_pct is not None else t.warehouse_coef_pct
     )
+    if inp.storage_first_liter is not None:
+        storage_day = inp.storage_first_liter + t.storage_per_liter_day * max(liters - ONE, ZERO)
+        storage_base = (
+            f"({fmt_money(inp.storage_first_liter)} + {fmt_money(t.storage_per_liter_day)} × "
+            f"{fmt_number(max(liters - ONE, ZERO))} л)"
+        )
+    else:
+        storage_day = liters * t.storage_per_liter_day
+        storage_base = f"{fmt_number(liters)} л × {fmt_money(t.storage_per_liter_day)}"
+    storage = round_money(storage_day * pct(storage_coef_pct) * inp.storage_days) if fbo else ZERO
     acceptance = round_money(liters * t.acceptance_per_liter * inp.acceptance_coef) if fbo else ZERO
     payout = price - commission - acquiring - logistics - storage - acceptance
     ads = round_money(price * pct(inp.ads_pct))
@@ -319,8 +332,8 @@ def evaluate(inp: WbInput, base: Tariffs | None = None, retail_price: Decimal | 
     if fbo:
         lines += [
             Line("Хранение",
-                 f"{li} × {fmt_money(t.storage_per_liter_day)} × {fmt_rate(t.warehouse_coef_pct)}"
-                 f" × {inp.storage_days} дн.", storage),
+                 f"{storage_base} × {fmt_rate(storage_coef_pct)} × {inp.storage_days} дн.",
+                 storage),
             Line("Приёмка", f"{li} × {fmt_money(t.acceptance_per_liter)} × коэф. "
                  f"{fmt_number(inp.acceptance_coef)}", acceptance),
         ]  # fmt: skip

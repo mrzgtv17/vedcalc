@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _TMP = Path(tempfile.mkdtemp(prefix="vedcalc-tests-"))
 os.environ["VEDCALC_SETTINGS_FILE"] = str(_TMP / "settings.ini")
 os.environ["VEDCALC_DATA_DIR"] = str(_TMP / "data")
+os.environ["VEDCALC_NO_KEYCHAIN"] = "1"  # токен WB — только в памяти
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CALC_DATE = date(2026, 3, 10)
