@@ -378,7 +378,10 @@ class PriceResultsPanel(_ResultsBase):
 
         self.batch_view = SectionView("Итого по партии")
         self.financing_view = SectionView("Стоимость денег")
-        for w in (self.cards_host, self.batch_view, self.financing_view):
+        from vedcalc.gui.whatif import WhatIfView
+
+        self.whatif_view = WhatIfView()
+        for w in (self.cards_host, self.batch_view, self.financing_view, self.whatif_view):
             self.page_layout.addWidget(w)
             self.result_widgets.append(w)
         self.page_layout.addStretch(1)
