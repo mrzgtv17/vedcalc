@@ -24,17 +24,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
-    QSpinBox,
     QTableWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from vedcalc.core.containers import load_containers
 from vedcalc.core.models import (
     AllocationMethod,
-    ContainerFreight,
     CostKind,
     CostLine,
     DeliveryMode,
@@ -219,8 +216,7 @@ class ShipmentForm(QWidget):
             "pack",
             "Упаковка",
             100,
-            "Грузовое место: размеры, вес и сколько товара в месте — для укладки в контейнер "
-            "и числа контейнеров во фрахте",
+            "Грузовое место: размеры, вес и сколько товара в месте — для укладки в контейнер",
         ),
     ]
     COST_COLUMNS: ClassVar[list[Column]] = [
@@ -261,45 +257,12 @@ class ShipmentForm(QWidget):
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         self.date_edit.setToolTip("Дата расчёта — на неё берутся курсы ЦБ РФ")
         self.delivery_combo = EnumCombo([(m, m.label) for m in DeliveryMode])
-        self.delivery_combo.setToolTip(
-            "Для контейнеров — загрузка, укладка мест и фрахт «ставка × число контейнеров»"
-        )
+        self.delivery_combo.setToolTip("Для контейнеров — загрузка и укладка грузовых мест")
         self.regime_combo = EnumCombo([(r, r.label) for r in TaxRegime])
         self.allocation_combo = EnumCombo([(a, a.label.capitalize()) for a in AllocationMethod])
         form.addRow("Название / номер расчёта", self.name_edit)
         form.addRow("Дата расчёта", self.date_edit)
         form.addRow("Способ доставки", self.delivery_combo)
-        freight = QHBoxLayout()
-        self.freight_amount = DecimalEdit(optional=True, placeholder="нет")
-        self.freight_amount.setToolTip(
-            "Ставка фрахта за один контейнер. В расходы попадёт «ставка × число контейнеров» "
-            "(доставка до границы, в таможенной стоимости)"
-        )
-        self.freight_currency = CurrencyCombo(self.settings.currencies)
-        self.freight_currency.set_value("USD")
-        self.freight_count = QSpinBox()
-        self.freight_count.setRange(0, 99)
-        self.freight_count.setSpecialValueText("авто")
-        self.freight_count.setPrefix("× ")
-        self.freight_count.setToolTip(
-            "Число контейнеров во фрахте. «авто» — по загрузке: по укладке мест, если у всех "
-            "позиций задана упаковка, иначе по объёму и весу"
-        )
-        freight.addWidget(self.freight_amount, 1)
-        freight.addWidget(self.freight_currency)
-        freight.addWidget(self.freight_count)
-        self.freight_label = QLabel("Фрахт за контейнер")
-        form.addRow(self.freight_label, freight)
-        self.freight_info = QLabel()
-        self.freight_info.setObjectName("caption")
-        self.freight_info.setWordWrap(True)
-        form.addRow("", self.freight_info)
-        self.delivery_combo.currentIndexChanged.connect(self._apply_freight_ui)
-        for w in (self.freight_amount, self.freight_currency):
-            _connect(w, self._emit_changed)
-        self.freight_count.valueChanged.connect(self._emit_changed)
-        self._field_widgets["freight.rate"] = self.freight_amount
-        self._field_widgets["freight.containers"] = self.freight_count
         form.addRow("Налоговый режим импортёра", self.regime_combo)
         form.addRow("Распределение расходов", self.allocation_combo)
         for w in (self.name_edit, self.date_edit, self.delivery_combo, self.allocation_combo):
@@ -307,19 +270,6 @@ class ShipmentForm(QWidget):
         self.regime_combo.currentIndexChanged.connect(self._on_regime_changed)
         self._field_widgets["tax_regime"] = self.regime_combo
         return box
-
-    def is_container(self) -> bool:
-        return self.delivery_combo.value().value in load_containers()
-
-    def _apply_freight_ui(self, *_args) -> None:
-        on = self.is_container()
-        for w in (self.freight_amount, self.freight_currency, self.freight_count,
-                  self.freight_label, self.freight_info):  # fmt: skip
-            w.setEnabled(on)
-
-    def set_freight_info(self, text: str) -> None:
-        self.freight_info.setText(text)
-        self.freight_info.setVisible(bool(text))
 
     def _build_items_box(self) -> QGroupBox:
         box = QGroupBox("Товары")
@@ -494,11 +444,6 @@ class ShipmentForm(QWidget):
             self.name_edit.setText(s.name)
             self.date_edit.setDate(QDate(s.calc_date.year, s.calc_date.month, s.calc_date.day))
             self.delivery_combo.set_value(s.delivery_mode)
-            rate = s.freight.rate
-            self.freight_amount.set_value(rate.amount if rate else None)
-            self.freight_currency.set_value(rate.currency if rate else "USD")
-            self.freight_count.setValue(s.freight.containers or 0)
-            self._apply_freight_ui()
             self.regime_combo.set_value(s.tax_regime)
             self.allocation_combo.set_value(s.allocation)
             self.items_table.clear_rows()
@@ -607,13 +552,6 @@ class ShipmentForm(QWidget):
                     else:
                         manual[c] = value
 
-        freight_amount = num(self.freight_amount, "freight.rate", "Фрахт за контейнер")
-        freight_currency = code(self.freight_currency, "freight.currency", "Валюта фрахта")
-        freight = ContainerFreight(
-            Money(freight_amount, freight_currency) if freight_amount is not None else None,
-            self.freight_count.value() or None,
-        )
-
         self._read_widgets = widgets
         if issues:
             return None, issues
@@ -631,7 +569,6 @@ class ShipmentForm(QWidget):
             financing=copy.deepcopy(self.pricing.financing),
             pricing_source=self.pricing.source,
             manual_cost=copy.deepcopy(self.pricing.manual_cost),
-            freight=freight,
         ), []
 
     # --- подсветка ошибок ---------------------------------------------------------

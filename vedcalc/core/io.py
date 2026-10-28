@@ -11,7 +11,6 @@ from typing import Any
 
 from vedcalc.core.models import (
     AllocationMethod,
-    ContainerFreight,
     CostKind,
     CostLine,
     DeliveryMode,
@@ -171,10 +170,6 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                 for c in s.costs
             ],
             "manual_rates": {k: str(v) for k, v in s.manual_rates.items()},
-            "freight": {
-                "rate": _money(s.freight.rate) if s.freight.rate else None,
-                "containers": s.freight.containers,
-            },
             "sale": {
                 "vat_rate": str(s.sale.vat_rate),
                 "profit_tax_rate": str(s.sale.profit_tax_rate),
@@ -248,7 +243,6 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
             for c in s["costs"]
         ]
         sale = s["sale"]
-        freight = s.get("freight") or {}
         return Shipment(
             name=s["name"],
             calc_date=date.fromisoformat(s["calc_date"]),
@@ -268,10 +262,6 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
             financing=_financing_from_dict(s.get("financing")),
             pricing_source=PricingSource(s.get("pricing_source", PricingSource.IMPORT)),
             manual_cost=_manual_from_dict(s.get("manual_cost")),
-            freight=ContainerFreight(
-                rate=_load_money(freight["rate"]) if freight.get("rate") else None,
-                containers=int(freight["containers"]) if freight.get("containers") else None,
-            ),
         )
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc

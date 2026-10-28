@@ -1,22 +1,14 @@
-"""«Контейнер» ↔ «Импорт»: упаковка позиций, укладка партии, фрахт «ставка × N»."""
+"""«Контейнер» ↔ «Импорт»: упаковка позиций и укладка партии в контейнер."""
 
 from decimal import Decimal as D
 
 import pytest
-from conftest import TEST_RATES, run
+from conftest import TEST_RATES
 from test_costing import two_items
 
-from vedcalc.core.containers import (
-    cargo_kinds,
-    estimate_load,
-    freight_containers,
-    freight_line,
-    with_freight,
-)
-from vedcalc.core.fees import load_fee_scale
+from vedcalc.core.containers import cargo_kinds, estimate_load
 from vedcalc.core.io import shipment_from_dict, shipment_to_dict
-from vedcalc.core.models import ContainerFreight, CostKind, DeliveryMode, Packaging
-from vedcalc.core.money import Money
+from vedcalc.core.models import DeliveryMode, Packaging
 from vedcalc.core.validation import validate_shipment
 
 BOX = Packaging(D(60), D(40), D(40), D(18), D(1))  # 1 насос в коробке 60×40×40, 18 кг
@@ -65,71 +57,21 @@ def test_without_full_packaging_falls_back():
     assert load.weight_kg == D(300) + D(2100)  # веса брутто позиций
 
 
-def test_freight_line_counts_containers():
-    s = packed()
-    assert freight_line(s) is None  # ставка не задана
-    s.freight = ContainerFreight(Money(D(3500), "USD"))
-    line = freight_line(s)
-    assert line.amount == Money(D(3500), "USD") and line.in_customs_value
-    assert line.kind is CostKind.DELIVERY_TO_BORDER and line.vat_rate == 0
-    s.items[1].quantity = D(25)
-    n = estimate_load(s).containers_needed
-    assert freight_containers(s) == n and freight_line(s).amount.amount == 3500 * n
-    s.freight.containers = 2  # вручную
-    assert freight_line(s).name.startswith("Фрахт за контейнер: 2 × 3")
-    # Не контейнер — фрахт не добавляется
-    s.delivery_mode = DeliveryMode.AIR
-    assert freight_line(s) is None and with_freight(s) is s
-
-
-def test_freight_in_cost_and_currency():
-    base = packed()
-    with_rate = packed()
-    with_rate.freight = ContainerFreight(Money(D(1000), "EUR"))
-    assert "EUR" in with_rate.currencies()
-    scale = load_fee_scale()
-    c0, c1 = run(base, scale), run(with_rate, scale)
-    # 1000 EUR в таможенной стоимости: себестоимость выросла больше, чем на сам фрахт (пошлина)
-    eur = TEST_RATES.get_rates(base.calc_date).rates["EUR"]
-    assert c1.cost_net - c0.cost_net > D(1000) * eur.value / eur.nominal
-    assert len(with_rate.costs) == len(base.costs)  # исходная партия не меняется
-
-
 def test_io_roundtrip_and_old_files():
     s = packed()
-    s.freight = ContainerFreight(Money(D(3500), "USD"), 3)
     data = shipment_to_dict(s)
     assert shipment_from_dict(data) == s
-    del data["shipment"]["freight"]
     for item in data["shipment"]["items"]:
         del item["packaging"]
     old = shipment_from_dict(data)
-    assert old.freight == ContainerFreight() and old.items[0].packaging is None
+    assert old.items[0].packaging is None
 
 
 def test_validation():
     s = packed()
     s.items[0].packaging = Packaging(D(0), D(40), D(40), D(18), D(1))
-    s.freight = ContainerFreight(Money(D(-1), "USD"), 0)
     paths = {i.path for i in validate_shipment(s)}
-    assert {"items[0].packaging", "freight.rate", "freight.containers"} <= paths
-
-
-def test_whatif_scales_freight_rate():
-    from vedcalc.core.basis import basis_from_cost
-    from vedcalc.core.report import build_cost_report, build_price_report
-    from vedcalc.core.whatif import sensitivity
-
-    s = packed()
-    s.costs = [c for c in s.costs if c.kind is not CostKind.DELIVERY_TO_BORDER]
-    s.costs = [c for c in s.costs if c.kind is not CostKind.DELIVERY_RF]
-    s.freight = ContainerFreight(Money(D(3500), "USD"))
-    cost = run(s, load_fee_scale())
-    report = build_price_report(basis_from_cost(cost, s.sale), s.financing, "x",
-                                build_cost_report(s, cost))  # fmt: skip
-    (freight,) = [t for t in sensitivity(report).tables if t.title == "Фрахт"]
-    rows = {r.scenario.label: r for r in freight.rows}
-    assert rows["+20%"].cost_net > rows["текущий"].cost_net > rows["−20%"].cost_net
+    assert "items[0].packaging" in paths
 
 
 # --- экран ------------------------------------------------------------------------------
@@ -149,36 +91,24 @@ def window(qtbot, monkeypatch):
     return w
 
 
-def test_form_reads_packaging_and_freight(window):
+def test_form_reads_packaging(window):
     s = packed()
-    s.freight = ContainerFreight(Money(D(3500), "USD"))
     window._load(s, None)
     form = window.calculator.form
     assert form.items_table.rows[0]["pack"].text() == "10 мест"
     assert form.items_table.rows[1]["pack"].text() == "4 места"
     read, issues = form.read()
-    assert not issues and read.items[1].packaging == PALLET and read.freight == s.freight
+    assert not issues and read.items[1].packaging == PALLET
     report = window.calculator.recalc()
     assert report.load.packed
-    assert "1 × 3" in form.freight_info.text() and "по укладке" in form.freight_info.text()
     card = window.calculator.results.load_card
     assert card.packing_button.isVisible() or card.packing_button.isVisibleTo(card)
     # Количество меняется — число мест в кнопке тоже
     form.items_table.rows[0]["quantity"].setText("25")
     assert form.items_table.rows[0]["pack"].text() == "25 мест"
-    # Не контейнер — поля фрахта недоступны
+    # Не контейнер — подсказки о загрузке нет
     form.delivery_combo.set_value(DeliveryMode.AIR)
-    assert not form.freight_amount.isEnabled()
-
-
-def test_manual_container_count(window):
-    s = packed()
-    s.freight = ContainerFreight(Money(D(1000), "USD"))
-    window._load(s, None)
-    window.calculator.form.freight_count.setValue(3)
-    window.calculator.recalc()
-    assert "3 × 1" in window.calculator.form.freight_info.text()
-    assert "вручную" in window.calculator.form.freight_info.text()
+    assert window.calculator.recalc().load is None
 
 
 def test_packaging_dialog():

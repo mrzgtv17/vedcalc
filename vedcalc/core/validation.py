@@ -45,11 +45,6 @@ def validate_shipment(shipment: Shipment) -> list[Issue]:
         )
     if not shipment.items:
         issues.append(Issue("items", "Добавьте хотя бы одну позицию товара"))
-    freight = shipment.freight
-    if freight.rate is not None and freight.rate.amount < 0:
-        issues.append(Issue("freight.rate", "Ставка фрахта не может быть отрицательной"))
-    if freight.containers is not None and freight.containers < 1:
-        issues.append(Issue("freight.containers", "Число контейнеров — от 1"))
 
     for n, item in enumerate(shipment.items):
         p = f"items[{n}]"

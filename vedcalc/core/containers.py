@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
 from functools import cache, lru_cache
 from importlib import resources
 from typing import Any
 
-from vedcalc.core.models import CostKind, CostLine, Shipment
-from vedcalc.core.money import ZERO, Money
+from vedcalc.core.models import Shipment
+from vedcalc.core.money import ZERO
 
 MM3_IN_M3 = Decimal(1_000_000_000)
 
@@ -159,38 +159,3 @@ def estimate_load(shipment: Shipment) -> LoadEstimate | None:
         packing,
         tuple(name(n, i) for n, i in items if i.packaging is None),
     )
-
-
-def freight_containers(shipment: Shipment) -> int | None:
-    """Сколько контейнеров оплачивается фрахтом: вручную или по загрузке; None — не контейнер."""
-    if load_containers().get(shipment.delivery_mode.value) is None:
-        return None
-    if shipment.freight.containers:
-        return shipment.freight.containers
-    load = estimate_load(shipment)
-    return load.containers_needed if load is not None else 1
-
-
-def freight_line(shipment: Shipment) -> CostLine | None:
-    """Расход «Фрахт за контейнер: N × ставка» — до границы, в таможенной стоимости."""
-    rate = shipment.freight.rate
-    count = freight_containers(shipment)
-    if rate is None or count is None:
-        return None
-    from vedcalc.core.explain import fmt_money
-
-    return CostLine(
-        f"Фрахт за контейнер: {count} × {fmt_money(rate.amount)} {rate.currency}",
-        Money(rate.amount * count, rate.currency),
-        in_customs_value=True,
-        vat_rate=ZERO,
-        kind=CostKind.DELIVERY_TO_BORDER,
-    )
-
-
-def with_freight(shipment: Shipment) -> Shipment:
-    """Партия с расходом на фрахт по числу контейнеров (исходная не меняется)."""
-    line = freight_line(shipment)
-    if line is None:
-        return shipment
-    return replace(shipment, costs=[*shipment.costs, line])
