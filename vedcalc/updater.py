@@ -28,6 +28,9 @@ from vedcalc import __version__
 REPO = "mrzgtv17/vedcalc"
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
+# Запасной путь без API (у анонимного API лимит 60 запросов в час на IP-адрес):
+DOWNLOAD_URL = f"https://github.com/{REPO}/releases/download/{{tag}}/{{name}}"
+CHANGELOG_URL = f"https://raw.githubusercontent.com/{REPO}/{{tag}}/CHANGELOG.md"
 CHECKSUMS_ASSET = "SHA256SUMS.txt"
 BUNDLE_ID = "ru.vedcalc.app"
 CHUNK = 256 * 1024
@@ -115,21 +118,88 @@ def _http_get(url: str, timeout: float = 15.0) -> bytes:
         return response.read()
 
 
+def _resolve_url(url: str, timeout: float = 15.0) -> str:
+    """Адрес после переадресаций: …/releases/latest → …/releases/tag/vX.Y.Z."""
+    import urllib.request
+
+    from vedcalc.core.fx import _ssl_context
+
+    request = urllib.request.Request(url, headers={"User-Agent": f"vedcalc/{__version__}"})
+    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
+        return response.geturl()
+
+
+def changelog_section(text: str, version: str) -> str:
+    """Раздел «## [X.Y.Z] …» из CHANGELOG.md — до следующего раздела или ссылок."""
+    out: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("## ["):
+            if inside:
+                break
+            inside = line.startswith(f"## [{version}]")
+            continue
+        if inside and re.match(r"^\[[^\]]+\]: ", line):
+            break
+        if inside:
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def _check_without_api(
+    current: str, fetch: Callable[[str], bytes], resolve: Callable[[str], str], arch: str
+) -> UpdateInfo | None:
+    page = resolve(RELEASES_PAGE)
+    match = re.search(r"/releases/tag/(v[\w.\-]+)$", page)
+    if not match:
+        raise UpdateError("На GitHub ещё нет опубликованных релизов")
+    tag = match.group(1)
+    if not is_newer(tag, current):
+        return None
+    version = tag.lstrip("v")
+    name = f"vedcalc-{version}-macos-{arch}.dmg"
+    sums = parse_checksums(
+        fetch(DOWNLOAD_URL.format(tag=tag, name=CHECKSUMS_ASSET)).decode("utf-8")
+    )
+    asset = (
+        Asset(name, DOWNLOAD_URL.format(tag=tag, name=name), 0, sums[name])
+        if name in sums
+        else None
+    )
+    try:
+        notes = changelog_section(fetch(CHANGELOG_URL.format(tag=tag)).decode("utf-8"), version)
+    except Exception:  # описание изменений — не главное, обновиться можно и без него
+        notes = ""
+    return UpdateInfo(version, notes, page, asset)
+
+
 def check_for_update(
     current: str = __version__,
     fetch: Callable[[str], bytes] = _http_get,
     arch: str | None = None,
+    resolve: Callable[[str], str] = _resolve_url,
 ) -> UpdateInfo | None:
-    """Новая версия или None, если установлена последняя."""
+    """Новая версия или None, если установлена последняя.
+
+    Сначала — API GitHub (там и описание релиза). Если API недоступен (в т.ч. исчерпан
+    лимит 60 запросов в час на IP), версия берётся из переадресации страницы релизов,
+    контрольные суммы — из SHA256SUMS.txt, описание — из CHANGELOG.md.
+    """
+    arch = arch or machine_arch()
     try:
         data = json.loads(fetch(LATEST_URL))
-    except Exception as exc:
-        raise UpdateError(f"Не удалось проверить обновления: {exc}") from exc
+    except Exception as api_error:
+        try:
+            return _check_without_api(current, fetch, resolve, arch)
+        except UpdateError:
+            raise
+        except Exception as exc:
+            raise UpdateError(f"Не удалось проверить обновления: {exc}") from api_error
     if data.get("draft") or data.get("prerelease") or "tag_name" not in data:
         return None
     if not is_newer(data["tag_name"], current):
         return None
-    return parse_release(data, arch or machine_arch(), fetch)
+    return parse_release(data, arch, fetch)
 
 
 # --- загрузка ---------------------------------------------------------------------------

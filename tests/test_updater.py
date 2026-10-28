@@ -217,3 +217,75 @@ class TestStageFromDmg:
 def test_running_from_source_is_not_installable():
     assert updater.current_app_bundle() is None
     assert not updater.can_install_in_place(None)
+
+
+# --- запасной путь без API ---------------------------------------------------------------
+
+CHANGELOG = """# История версий
+
+## [Не выпущено]
+
+## [0.3.0] — 2026-10-28
+
+### Добавлено
+- Вкладка «Цена продажи».
+
+## [0.2.0] — 2026-10-26
+
+- старое
+
+[0.3.0]: ../../compare/v0.2.0...v0.3.0
+"""
+
+
+def rate_limited_fetch(extra: dict[str, bytes]):
+    def fetch(url: str) -> bytes:
+        if url == updater.LATEST_URL:
+            raise OSError("HTTP Error 403: rate limit exceeded")
+        if url not in extra:
+            raise OSError(f"нет сети: {url}")
+        return extra[url]
+
+    return fetch
+
+
+def resolve_to(tag: str):
+    return lambda url: f"https://github.com/mrzgtv17/vedcalc/releases/tag/{tag}"
+
+
+def test_fallback_when_api_rate_limited():
+    base = "https://github.com/mrzgtv17/vedcalc/releases/download/v0.3.0/"
+    fetch = rate_limited_fetch(
+        {
+            base + "SHA256SUMS.txt": f"{SHA}  vedcalc-0.3.0-macos-arm64.dmg\n".encode(),
+            "https://raw.githubusercontent.com/mrzgtv17/vedcalc/v0.3.0/CHANGELOG.md": (
+                CHANGELOG.encode()
+            ),
+        }
+    )
+    info = updater.check_for_update("0.2.0", fetch, "arm64", resolve_to("v0.3.0"))
+    assert info.version == "0.3.0"
+    assert info.asset.url == base + "vedcalc-0.3.0-macos-arm64.dmg"
+    assert info.asset.sha256 == SHA
+    assert info.notes == "### Добавлено\n- Вкладка «Цена продажи»."
+
+
+def test_fallback_without_changelog_and_up_to_date():
+    base = "https://github.com/mrzgtv17/vedcalc/releases/download/v0.3.0/"
+    fetch = rate_limited_fetch({base + "SHA256SUMS.txt": f"{SHA}  other.dmg\n".encode()})
+    info = updater.check_for_update("0.2.0", fetch, "arm64", resolve_to("v0.3.0"))
+    assert info.notes == "" and info.asset is None  # нет сборки → только «скачать вручную»
+    assert updater.check_for_update("0.3.0", fetch, "arm64", resolve_to("v0.3.0")) is None
+
+
+def test_fallback_failure_is_friendly():
+    def broken(url):
+        raise OSError("нет сети")
+
+    with pytest.raises(UpdateError, match="Не удалось проверить обновления"):
+        updater.check_for_update("0.2.0", rate_limited_fetch({}), "arm64", broken)
+
+
+def test_changelog_section():
+    assert updater.changelog_section(CHANGELOG, "0.2.0") == "- старое"
+    assert updater.changelog_section(CHANGELOG, "9.9.9") == ""
