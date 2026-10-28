@@ -9,7 +9,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
+from vedcalc.core.explain import fmt_money
 from vedcalc.core.report import CostReport, PriceReport, Row
+from vedcalc.core.whatif import WhatIf
 
 MONEY = "#,##0.00"
 HEADER_FILL = PatternFill("solid", fgColor="EEF2F7")
@@ -141,8 +143,37 @@ def write_cost_xlsx(report: CostReport, path: Path) -> None:
     wb.save(path)
 
 
-def write_price_xlsx(report: PriceReport, path: Path) -> None:
-    """Цена продажи: «За единицу», «Итоги» (+ стоимость денег), «Детализация»."""
+def _whatif_sheet(wb: Workbook, report: PriceReport, whatif: WhatIf) -> None:
+    ws = wb.create_sheet("Что если")
+    r = _header(ws, report.title, f"Цена продажи не меняется: {fmt_money(whatif.price_net)} ₽ "
+                f"без НДС за партию. {whatif.scope_text}", ())  # fmt: skip
+    for table in whatif.tables:
+        ws.cell(r, 1, table.title).font = SECTION
+        r += 1
+        for c, h in enumerate(whatif.heads, 1):
+            ws.cell(r, c, h + (", %" if c == 4 else "")).font = BOLD
+        r += 1
+        for row in table.rows:
+            cost = row.unit_cost if row.unit_cost is not None else row.cost_net
+            margin = None if row.margin is None else round(row.margin * 100, 2)
+            values = (row.scenario.label, cost, row.net_profit, margin, row.profit_delta)
+            for c, value in enumerate(values, 1):
+                cell = ws.cell(r, c, value)
+                if isinstance(value, Decimal):
+                    cell.number_format = "#,##0.00"
+                if row.scenario.is_base:
+                    cell.font = BOLD
+            r += 1
+        ws.cell(r, 1, table.note).font = Font(italic=True, color="76746D")
+        r += 2
+    for note in whatif.notes:
+        ws.cell(r, 1, note)
+        r += 1
+    _widths(ws, 22, 24, 20, 12, 16)
+
+
+def write_price_xlsx(report: PriceReport, path: Path, whatif: WhatIf | None = None) -> None:
+    """Цена продажи: «За единицу», «Итоги» (+ стоимость денег), «Что если», «Детализация»."""
     wb = Workbook()
     subtitle = f"Цена продажи · {report.target_title} · {report.basis.source_label}"
     warnings = [report.target_error] if report.target is None and report.target_error else []
@@ -173,6 +204,8 @@ def write_price_xlsx(report: PriceReport, path: Path) -> None:
     _write_rows(ws, r, "Методика", report.method_rows())
     _widths(ws, 42, 30, 60, 18)
 
+    if whatif is not None and whatif.tables:
+        _whatif_sheet(wb, report, whatif)
     _steps_sheet(wb, report.step_groups())
     wb.save(path)
 

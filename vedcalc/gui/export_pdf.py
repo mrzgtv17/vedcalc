@@ -8,13 +8,16 @@ from PySide6.QtCore import QMarginsF
 from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
 from vedcalc.core.report import CostReport, PriceReport
+from vedcalc.core.whatif import WhatIf
 from vedcalc.reports.html import render_cost_html, render_price_html
 
 
-def write_pdf(report: CostReport | PriceReport, path: Path) -> None:
+def write_pdf(report: CostReport | PriceReport, path: Path, whatif: WhatIf | None = None) -> None:
+    """whatif — таблицы «Что если» для отчёта о цене (как на экране, со своей ставкой)."""
     font = QGuiApplication.font().family()
     if isinstance(report, PriceReport):
-        html, title = render_price_html(report, font_family=font), report.title
+        html = render_price_html(report, font_family=font, whatif=whatif)
+        title = report.title
     else:
         html, title = render_cost_html(report, font_family=font), report.shipment.name
     writer = QPdfWriter(str(path))

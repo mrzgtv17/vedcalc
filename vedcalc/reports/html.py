@@ -14,6 +14,7 @@ from vedcalc import __version__
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
 from vedcalc.core.report import CostReport, PriceReport, Row
 from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
+from vedcalc.core.whatif import WhatIf
 from vedcalc.reports.style import (
     ACCENT,
     ACCENT_HOVER,
@@ -281,8 +282,45 @@ def _periods_table(report: PriceReport) -> str:
     return "".join(out)
 
 
+def _whatif_section(whatif: WhatIf) -> list[str]:
+    body = [
+        "<h2>Что если</h2>",
+        f'<p class="muted">Цена продажи не меняется: {fmt_money(whatif.price_net)} ₽ без НДС '
+        f"за партию. {escape(whatif.scope_text)}</p>",
+    ]
+    for table in whatif.tables:
+        out = [f"<h3>{escape(table.title)}</h3>",
+               '<table width="100%" cellspacing="0" cellpadding="4"><tr>']  # fmt: skip
+        out += [f'<td class="{"num " if c else ""}muted small">{escape(h)}</td>'
+                for c, h in enumerate(whatif.heads)]  # fmt: skip
+        out.append("</tr>")
+        for row in table.rows:
+            cost = row.unit_cost if row.unit_cost is not None else row.cost_net
+            delta = (
+                "—"
+                if not row.profit_delta
+                else (("+" if row.profit_delta > 0 else "−") + fmt_money(abs(row.profit_delta)))
+            )
+            sign = "pos" if row.net_profit >= 0 else "neg"
+            cls = ' class="strong"' if row.scenario.is_base else ""
+            out.append(
+                f"<tr{cls}><td>{escape(row.scenario.label)}</td>"
+                f'<td class="num">{fmt_money(cost)}</td>'
+                f'<td class="num"><span class="{sign}">{fmt_money(row.net_profit)}</span></td>'
+                f'<td class="num">{fmt_pct(row.margin)}</td><td class="num">{delta}</td></tr>'
+            )  # fmt: skip
+        out.append(f'</table><p class="muted small">{escape(table.note)}</p>')
+        body += out
+    body += [f'<p class="muted small">{escape(n)}</p>' for n in whatif.notes]
+    return body
+
+
 def render_price_html(
-    report: PriceReport, *, details: bool = True, font_family: str | None = None
+    report: PriceReport,
+    *,
+    details: bool = True,
+    font_family: str | None = None,
+    whatif: WhatIf | None = None,
 ) -> str:
     body: list[str] = []
     if report.target is None:
@@ -292,6 +330,8 @@ def render_price_html(
     body += [f"<h2>{escape(batch.title)}</h2>", _rows_table(batch.rows)]
     if fin_rows := report.financing_rows():
         body += ["<h2>Стоимость денег</h2>", _rows_table(fin_rows), _periods_table(report)]
+    if whatif is not None and whatif.tables:
+        body += _whatif_section(whatif)
     if details and report.step_groups():
         body += ["<h2>Расчёт по партии</h2>", _steps(report.step_groups())]
     body += ["<h2>Методика</h2>", _rows_table(report.method_rows())]
