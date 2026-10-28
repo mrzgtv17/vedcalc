@@ -10,6 +10,7 @@ from vedcalc.core.models import (
     CostLine,
     DutyKind,
     DutyRate,
+    DutyUnit,
     Item,
     SaleParams,
     TaxRegime,
@@ -159,11 +160,13 @@ def test_rounding_residue_goes_to_last_item(scale):
     assert [i.costs_in_cv for i in cost.items] == [D("33.33"), D("33.33"), D("33.34")]
 
 
-def test_specific_duty_is_a_clear_error(scale):
+def test_combined_duty_needs_net_weight(scale):
     s = control_shipment()
-    s.items[0].duty = DutyRate(DutyKind.COMBINED, D(5), Money("0.5", "EUR"), Unit.KG)
-    with pytest.raises(InputError, match="комбинированные ставки пошлины"):
+    s.items[0].duty = DutyRate(DutyKind.COMBINED, D(5), Money("0.5", "EUR"), DutyUnit.KG)
+    with pytest.raises(InputError, match="вес нетто"):
         run(s, scale)
+    s.items[0].net_weight_kg = D(20000)  # 0,5 EUR × 20 000 кг × 95,10 = 951 000 > 5%
+    assert run(s, scale).duty == D("951000.00")
 
 
 @pytest.mark.parametrize(

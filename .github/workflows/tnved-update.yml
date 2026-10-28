@@ -1,0 +1,61 @@
+name: Обновление справочника ТН ВЭД
+
+# Раз в месяц (и вручную): свежая выгрузка ТН ВЭД ЕАЭС с tws.by → PR с новой
+# версией программы. Справочник вшит в программу и обновляется вместе с ней.
+on:
+  schedule:
+    - cron: "0 6 1 * *"  # 1-го числа, 09:00 МСК
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .  "openpyxl>=3.1"
+      - name: Скачать и разобрать выгрузку
+        id: update
+        run: |
+          python scripts/update_tnved.py | tee summary.txt
+          if git diff --quiet -- vedcalc/data/tnved_tws.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "date=$(python -c 'import json; print(json.load(open("vedcalc/data/tnved_tws.json"))["actual_date"])')" >> "$GITHUB_OUTPUT"
+      - name: PR с обновлённым справочником и новой версией
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTUAL: ${{ steps.update.outputs.date }}
+        run: |
+          VERSION=$(python scripts/bump_patch.py "Справочник ТН ВЭД и ставки ЕТТ обновлены на ${ACTUAL}.")
+          BRANCH="data/tnved-${ACTUAL}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "Справочник ТН ВЭД на ${ACTUAL}; ${VERSION}"
+          git push -u origin "$BRANCH"
+          {
+            echo "Ежемесячное обновление справочника ТН ВЭД ЕАЭС (tws.by) и версия **${VERSION}**."
+            echo
+            echo '```'
+            cat summary.txt
+            echo '```'
+            echo
+            echo "**Чтобы запустить проверки CI**, закройте и снова откройте этот PR (PR от бота GitHub проверки сам не запускает)."
+            echo "После слияния — поставить тег \`v${VERSION}\`: сборка и релиз выйдут автоматически, программа предложит обновление пользователям."
+          } > body.md
+          gh pr create --title "Справочник ТН ВЭД на ${ACTUAL}; версия ${VERSION}" --body-file body.md \
+            || gh issue create --title "Обновить справочник ТН ВЭД (${ACTUAL})" --body-file body.md
+      - name: Без изменений
+        if: steps.update.outputs.changed != 'true'
+        run: echo "Справочник не изменился — PR не нужен."

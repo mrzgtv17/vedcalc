@@ -418,3 +418,37 @@ def test_deleting_marked_row_does_not_break_recalc(window, qtbot):
     qtbot.wait(50)  # Qt уничтожает виджеты удалённой строки
     calc.recalc()
     assert calc.report is not None
+
+
+def test_tnved_code_fills_duty(window):
+    from vedcalc.core.models import DutyKind
+    from vedcalc.gui.tnved import TnvedSearchDialog
+
+    form = window.calculator.form
+    r = form.items_table.rows[0]
+    r["name"].setText("Говядина")
+    r["price"].setText("4")
+    r["quantity"].setText("1000")
+    r["unit"].set_value(Unit.KG)
+    r["tnved"].setText("0201100008")  # 50%, но не менее 1 EUR за 1 кг
+    assert r["duty"].text() == "50" and r["duty"].isReadOnly()
+    assert not r["duty_qty"].isEnabled()  # за кг — количество берётся из веса
+    window.calculator.recalc()
+    assert window.calculator.report.cost.items[0].duty > 0
+    # Код со ставкой за пары — нужно «кол-во в ед. ставки»
+    r["tnved"].setText("6401100000")
+    assert r["duty_qty"].isEnabled() and r["duty_qty"].placeholderText() == "пар"
+    # Адвалорная ставка — можно править вручную
+    r["tnved"].setText("8507202000")
+    assert r["duty"].text() == "3" and not r["duty"].isReadOnly()
+    r["duty"].setText("7")
+    shipment, _ = form.read()
+    assert shipment.items[0].duty.kind is DutyKind.AD_VALOREM
+    assert shipment.items[0].duty.percent == 7 and not shipment.items[0].duty.source
+    # Неизвестный код подсвечивается, ставка остаётся ручной
+    r["tnved"].setText("0000000000")
+    assert r["tnved"].unknown and "border" in r["tnved"].styleSheet()
+    # Подбор по названию
+    dialog = TnvedSearchDialog("аккумуляторы свинцовые")
+    assert dialog.results and dialog.selected is not None
+    assert "tws.by" in dialog.link.text()

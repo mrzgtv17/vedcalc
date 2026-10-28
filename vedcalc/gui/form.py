@@ -36,6 +36,7 @@ from vedcalc.core.models import (
     CostLine,
     DeliveryMode,
     DutyRate,
+    DutyUnit,
     Financing,
     Item,
     ManualCost,
@@ -47,8 +48,10 @@ from vedcalc.core.models import (
 )
 from vedcalc.core.money import ZERO, Money
 from vedcalc.core.settings import load_settings
+from vedcalc.core.tnved import TnvedEntry
 from vedcalc.core.units import Unit
 from vedcalc.core.validation import Issue
+from vedcalc.gui.tnved import TnvedEdit
 from vedcalc.gui.widgets import (
     CenteredCheck,
     CurrencyCombo,
@@ -57,6 +60,7 @@ from vedcalc.gui.widgets import (
     VatCombo,
     mark_error,
 )
+from vedcalc.reports.style import WARN
 
 COST_PRESETS: list[tuple[str, CostKind, bool, Decimal]] = [
     # (название, вид, включается в ТС, ставка НДС по умолчанию)
@@ -177,12 +181,23 @@ class ShipmentForm(QWidget):
 
     ITEM_COLUMNS: ClassVar[list[Column]] = [
         Column("name", "Наименование", 180),
-        Column("tnved", "Код ТН ВЭД", 105, "Необязательно, 10 цифр. Пока только сохраняется."),
+        Column(
+            "tnved",
+            "Код ТН ВЭД",
+            125,
+            "10 цифр — пошлина подставится из ЕТТ. Лупа — подбор кода по названию.",
+        ),
         Column("price", "Цена за ед.", 95),
         Column("currency", "Валюта", 70),
         Column("quantity", "Кол-во", 75),
         Column("unit", "Ед.", 60),
-        Column("duty", "Пошлина, %", 80, "Адвалорная ставка ввозной пошлины, % от ТС"),
+        Column("duty", "Пошлина, %", 80, "Ставка ввозной пошлины, % от ТС (или из ЕТТ по коду)"),
+        Column(
+            "duty_qty",
+            "Кол-во в ед. ставки",
+            110,
+            "Для специфической ставки за л, пары, м², см³ — количество в этой единице",
+        ),
         Column("vat", "НДС, %", 70, "Ставка НДС при ввозе"),
         Column("excise", "Акциз, ₽", 80, "Заглушка: сумма акциза в рублях, обычно 0"),
         Column(
@@ -333,8 +348,8 @@ class ShipmentForm(QWidget):
         unit.set_value(item.unit)
         vat = VatCombo(self.settings.allowed_vat_rates)
         vat.set_value(item.vat_rate)
-        tnved = QLineEdit(item.tnved_code or "")
-        tnved.setMaxLength(10)
+        tnved = TnvedEdit(item.tnved_code or "")
+        duty_qty = DecimalEdit(item.duty_quantity, optional=True)
         self.items_table.append(
             {
                 "name": name,
@@ -344,15 +359,44 @@ class ShipmentForm(QWidget):
                 "quantity": DecimalEdit(item.quantity),
                 "unit": unit,
                 "duty": DecimalEdit(item.duty.percent),
+                "duty_qty": duty_qty,
                 "vat": vat,
                 "excise": DecimalEdit(item.excise.amount or None, optional=True, placeholder="0"),
                 "gross": DecimalEdit(item.gross_weight_kg, optional=True),
                 "net": DecimalEdit(item.net_weight_kg, optional=True),
                 "volume": DecimalEdit(item.volume_m3, optional=True),
-                # Неподдерживаемый тип пошлины из файла сохраняем как есть
-                "meta": {"duty": item.duty},
+                # Ставка из ЕТТ (или из файла расчёта) — со специфической частью и источником
+                "meta": {"duty": item.duty if item.duty.source or item.duty.has_specific else None},
             }
         )
+        row = self.items_table.rows[-1]
+        tnved.entryChanged.connect(lambda entry, r=row: self._apply_tnved(r, entry))
+        unit.currentIndexChanged.connect(lambda _=None, r=row: self._apply_duty_ui(r))
+        self._apply_duty_ui(row)
+
+    def _apply_tnved(self, row: dict, entry: TnvedEntry | None) -> None:
+        """Код введён: подставить ставку ЕТТ (ручные правки затираются только новым кодом)."""
+        if entry is not None:
+            rate = entry.duty
+            row["meta"]["duty"] = rate
+            row["duty"].set_value(rate.percent)
+        elif row["meta"].get("duty") is not None and row["meta"]["duty"].source:
+            # Код стёрт или не найден — ставка снова ручная (процент оставляем)
+            row["meta"]["duty"] = None
+        self._apply_duty_ui(row)
+
+    def _apply_duty_ui(self, row: dict) -> None:
+        rate: DutyRate | None = row["meta"].get("duty")
+        specific = rate is not None and rate.has_specific
+        duty_edit, qty_edit, tnved = row["duty"], row["duty_qty"], row["tnved"]
+        duty_edit.setReadOnly(specific)
+        duty_edit.setToolTip(
+            f"Ставка ЕТТ: {rate.label}" if rate is not None else self.ITEM_COLUMNS[6].tooltip
+        )
+        needs_qty = specific and _needs_duty_quantity(rate, row["unit"].value())
+        qty_edit.setEnabled(needs_qty)
+        qty_edit.setPlaceholderText(rate.specific_unit.label if needs_qty else "")
+        tnved.setStyleSheet(f"border:1px solid {WARN};" if tnved.unknown else "")
 
     def add_cost(self, line: CostLine) -> None:
         name = QLineEdit(line.name)
@@ -432,10 +476,14 @@ class ShipmentForm(QWidget):
             gross = num(row["gross"], f"{p}.gross_weight_kg", f"{who}, вес брутто")
             net = num(row["net"], f"{p}.net_weight_kg", f"{who}, вес нетто")
             volume = num(row["volume"], f"{p}.volume_m3", f"{who}, объём")
-            stored_duty: DutyRate = row["meta"]["duty"]
-            duty = DutyRate.ad_valorem(duty_pct if duty_pct is not None else 0)
-            if stored_duty.kind != duty.kind:
-                duty = stored_duty
+            duty_qty = num(row["duty_qty"], f"{p}.duty_quantity", f"{who}, кол-во в ед. ставки")
+            widgets[f"{p}.duty_quantity"] = row["duty_qty"]
+            rate: DutyRate | None = row["meta"].get("duty")
+            percent = duty_pct if duty_pct is not None else ZERO
+            if rate is not None and (rate.has_specific or rate.percent == percent):
+                duty = rate  # ставка ЕТТ (со специфической частью и источником)
+            else:
+                duty = DutyRate.ad_valorem(percent)  # ручная адвалорная ставка
             items.append(
                 Item(
                     name=row["name"].text().strip(),
@@ -448,6 +496,7 @@ class ShipmentForm(QWidget):
                     excise=Money.rub(excise or ZERO),
                     gross_weight_kg=gross,
                     net_weight_kg=net,
+                    duty_quantity=duty_qty if row["duty_qty"].isEnabled() else None,
                     volume_m3=volume,
                 )
             )
@@ -561,6 +610,14 @@ class PricingState:
             s.pricing_source,
             copy.deepcopy(s.manual_cost),
         )
+
+
+def _needs_duty_quantity(rate: DutyRate, unit: Unit) -> bool:
+    """Нужно ли отдельное количество: ставка не за кг/т и не за шт при количестве в шт."""
+    su = rate.specific_unit
+    if su is None or su.by_weight:
+        return False
+    return not (su is DutyUnit.PCS and unit is Unit.PCS)
 
 
 def new_shipment() -> Shipment:

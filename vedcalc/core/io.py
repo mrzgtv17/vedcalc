@@ -16,6 +16,7 @@ from vedcalc.core.models import (
     DeliveryMode,
     DutyKind,
     DutyRate,
+    DutyUnit,
     Financing,
     FinancingMode,
     Item,
@@ -116,6 +117,8 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                         "kind": i.duty.kind.value,
                         "percent": str(i.duty.percent),
                         "specific": _money(i.duty.specific) if i.duty.specific else None,
+                        "per_quantity": str(i.duty.per_quantity),
+                        "source": i.duty.source,
                         "specific_unit": i.duty.specific_unit.value
                         if i.duty.specific_unit
                         else None,
@@ -125,6 +128,7 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                     "gross_weight_kg": _opt(i.gross_weight_kg),
                     "net_weight_kg": _opt(i.net_weight_kg),
                     "volume_m3": _opt(i.volume_m3),
+                    "duty_quantity": _opt(i.duty_quantity),
                 }
                 for i in s.items
             ],
@@ -186,13 +190,18 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
                         kind=DutyKind(d["kind"]),
                         percent=Decimal(d["percent"]),
                         specific=_load_money(d["specific"]) if d.get("specific") else None,
-                        specific_unit=Unit(d["specific_unit"]) if d.get("specific_unit") else None,
+                        specific_unit=DutyUnit(d["specific_unit"])
+                        if d.get("specific_unit")
+                        else None,
+                        per_quantity=Decimal(d.get("per_quantity", "1")),
+                        source=d.get("source", ""),
                     ),
                     vat_rate=Decimal(i["vat_rate"]),
                     excise=_load_money(i["excise"]),
                     gross_weight_kg=_dec_opt(i.get("gross_weight_kg")),
                     net_weight_kg=_dec_opt(i.get("net_weight_kg")),
                     volume_m3=_dec_opt(i.get("volume_m3")),
+                    duty_quantity=_dec_opt(i.get("duty_quantity")),
                 )
             )
         costs = [
