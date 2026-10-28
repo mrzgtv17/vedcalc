@@ -215,7 +215,13 @@ def render_cost_html(
     if report.load is not None:
         body += [
             f"<h2>Загрузка контейнера {escape(report.load.spec.title)}</h2>",
-            '<p class="muted small">По сумме объёмов и весов позиций, без учёта укладки.</p>',
+            '<p class="muted small">'
+            + (
+                "По укладке грузовых мест (алгоритм модуля «Контейнер»)."
+                if report.load.packed
+                else "По сумме объёмов и весов позиций, без учёта укладки."
+            )
+            + "</p>",
             _rows_table(report.load_rows()),
         ]
     if details:

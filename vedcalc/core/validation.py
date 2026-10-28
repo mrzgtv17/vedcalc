@@ -45,6 +45,11 @@ def validate_shipment(shipment: Shipment) -> list[Issue]:
         )
     if not shipment.items:
         issues.append(Issue("items", "Добавьте хотя бы одну позицию товара"))
+    freight = shipment.freight
+    if freight.rate is not None and freight.rate.amount < 0:
+        issues.append(Issue("freight.rate", "Ставка фрахта не может быть отрицательной"))
+    if freight.containers is not None and freight.containers < 1:
+        issues.append(Issue("freight.containers", "Число контейнеров — от 1"))
 
     for n, item in enumerate(shipment.items):
         p = f"items[{n}]"
@@ -55,6 +60,12 @@ def validate_shipment(shipment: Shipment) -> list[Issue]:
             issues.append(Issue(f"{p}.quantity", f"{who}: количество должно быть больше нуля"))
         if item.unit_price.amount < 0:
             issues.append(Issue(f"{p}.unit_price", f"{who}: цена не может быть отрицательной"))
+        pk = item.packaging
+        if pk is not None:
+            dims = (pk.length_cm, pk.width_cm, pk.height_cm, pk.units_per_place)
+            if min(dims) <= 0 or pk.gross_kg < 0:
+                issues.append(Issue(f"{p}.packaging", f"{who}: размеры места и количество в "
+                                    "месте должны быть больше нуля"))  # fmt: skip
         if item.excise.amount < 0:
             issues.append(Issue(f"{p}.excise", f"{who}: акциз не может быть отрицательным"))
         if item.vat_rate not in ALLOWED_IMPORT_VAT:

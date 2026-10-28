@@ -144,6 +144,9 @@ def _line_amounts(
 
 
 def calculate(shipment: Shipment, rates: ResolvedRates, fee_scale: FeeScale) -> CostResult:
+    from vedcalc.core.containers import with_freight
+
+    shipment = with_freight(shipment)  # фрахт «ставка × число контейнеров» — обычный расход
     ensure_valid(shipment)
     ex = Explainer()
     vat_payer = shipment.tax_regime.vat_payer

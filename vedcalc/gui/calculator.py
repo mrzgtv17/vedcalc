@@ -8,9 +8,10 @@ from html import escape
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QSplitter, QWidget
 
-from vedcalc.core.containers import estimate_load
+from vedcalc.core.containers import estimate_load, freight_line
 from vedcalc.core.costing import calculate
 from vedcalc.core.customs import NotSupportedError
+from vedcalc.core.explain import fmt_money
 from vedcalc.core.fees import FeeScale, load_fee_scale
 from vedcalc.core.fx import FxError, RateProvider, RateSet, resolve_rates
 from vedcalc.core.models import Shipment
@@ -82,11 +83,31 @@ class RatesLoader(QObject):
         raise FxError(self.errors.get(on, "курсы ещё загружаются"))
 
 
+def freight_info(shipment, load) -> str:
+    """Подпись под ставкой фрахта: сколько контейнеров и откуда это число."""
+    line = freight_line(shipment)
+    if line is None:
+        return ""
+    if shipment.freight.containers:
+        source = "задано вручную"
+    elif load is not None and load.packed:
+        source = "по укладке грузовых мест"
+    elif load is not None:
+        source = "по объёму и весу — задайте упаковку позиций для точной укладки"
+    else:
+        source = "нет объёма и веса позиций — считаем 1 контейнер"
+    return (
+        f"В расходах: {line.name} = {fmt_money(line.amount.amount)} {line.amount.currency} "
+        f"({source})."
+    )
+
+
 class CalculatorTab(QWidget):
     """Вкладка «Импорт»: себестоимость партии и единицы, подсказка о загрузке контейнера."""
 
     modified = Signal()
     reportChanged = Signal()
+    showPacking = Signal()  # открыть грузовые места партии во вкладке «Контейнер»
 
     def __init__(
         self,
@@ -105,6 +126,7 @@ class CalculatorTab(QWidget):
 
         self.form = ShipmentForm()
         self.results = CostResultsPanel()
+        self.results.showPacking.connect(self.showPacking)
 
         left = QScrollArea()
         left.setWidgetResizable(True)
@@ -202,7 +224,8 @@ class CalculatorTab(QWidget):
         try:
             rates = resolve_rates(shipment.currencies(), on, self.rates, shipment.manual_rates)
             cost = calculate(shipment, rates, self.fee_scale)
-            report = build_cost_report(shipment, cost, estimate_load(shipment))
+            load = estimate_load(shipment)
+            report = build_cost_report(shipment, cost, load)
         except InputError as exc:
             self.form.mark_issues(exc.issues if self.touched else [])
             self._set_report(None)
@@ -212,6 +235,7 @@ class CalculatorTab(QWidget):
             self._set_report(None)
             self.results.show_message(escape(str(exc)), error=True)
             return None
+        self.form.set_freight_info(freight_info(shipment, load))
         self._set_report(report)
         self.results.show_report(report)
         return report

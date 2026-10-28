@@ -11,6 +11,7 @@ from typing import Any
 
 from vedcalc.core.models import (
     AllocationMethod,
+    ContainerFreight,
     CostKind,
     CostLine,
     DeliveryMode,
@@ -21,6 +22,7 @@ from vedcalc.core.models import (
     FinancingMode,
     Item,
     ManualCost,
+    Packaging,
     PriceMode,
     PricingSource,
     SaleParams,
@@ -96,6 +98,30 @@ def _manual_from_dict(d: dict | None) -> ManualCost:
     )
 
 
+_PACK_DECIMALS = ("length_cm", "width_cm", "height_cm", "gross_kg", "units_per_place")
+
+
+def _packaging_to_dict(pk: Packaging | None) -> dict | None:
+    if pk is None:
+        return None
+    return {k: str(getattr(pk, k)) for k in _PACK_DECIMALS} | {
+        "can_tip": pk.can_tip,
+        "stackable": pk.stackable,
+        "max_layers": pk.max_layers,
+    }
+
+
+def _packaging_from_dict(d: dict | None) -> Packaging | None:
+    if not d:
+        return None
+    return Packaging(
+        *(Decimal(d[k]) for k in _PACK_DECIMALS),
+        can_tip=bool(d.get("can_tip", False)),
+        stackable=bool(d.get("stackable", True)),
+        max_layers=int(d["max_layers"]) if d.get("max_layers") else None,
+    )
+
+
 def shipment_to_dict(s: Shipment) -> dict[str, Any]:
     return {
         "format": FORMAT,
@@ -129,6 +155,7 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                     "net_weight_kg": _opt(i.net_weight_kg),
                     "volume_m3": _opt(i.volume_m3),
                     "duty_quantity": _opt(i.duty_quantity),
+                    "packaging": _packaging_to_dict(i.packaging),
                 }
                 for i in s.items
             ],
@@ -144,6 +171,10 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                 for c in s.costs
             ],
             "manual_rates": {k: str(v) for k, v in s.manual_rates.items()},
+            "freight": {
+                "rate": _money(s.freight.rate) if s.freight.rate else None,
+                "containers": s.freight.containers,
+            },
             "sale": {
                 "vat_rate": str(s.sale.vat_rate),
                 "profit_tax_rate": str(s.sale.profit_tax_rate),
@@ -202,6 +233,7 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
                     net_weight_kg=_dec_opt(i.get("net_weight_kg")),
                     volume_m3=_dec_opt(i.get("volume_m3")),
                     duty_quantity=_dec_opt(i.get("duty_quantity")),
+                    packaging=_packaging_from_dict(i.get("packaging")),
                 )
             )
         costs = [
@@ -216,6 +248,7 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
             for c in s["costs"]
         ]
         sale = s["sale"]
+        freight = s.get("freight") or {}
         return Shipment(
             name=s["name"],
             calc_date=date.fromisoformat(s["calc_date"]),
@@ -235,6 +268,10 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
             financing=_financing_from_dict(s.get("financing")),
             pricing_source=PricingSource(s.get("pricing_source", PricingSource.IMPORT)),
             manual_cost=_manual_from_dict(s.get("manual_cost")),
+            freight=ContainerFreight(
+                rate=_load_money(freight["rate"]) if freight.get("rate") else None,
+                containers=int(freight["containers"]) if freight.get("containers") else None,
+            ),
         )
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc

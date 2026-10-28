@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QScrollArea,
     QTabWidget,
     QTextBrowser,
@@ -173,7 +174,9 @@ class PriceUnitCard(_UnitCard):
 
 
 class LoadCard(QFrame):
-    """Подсказка: сколько контейнера занято по объёму и по весу."""
+    """Подсказка: сколько контейнера занято по объёму и по весу (или по укладке мест)."""
+
+    showPacking = Signal()
 
     def __init__(self, report: CostReport):
         super().__init__()
@@ -216,14 +219,41 @@ class LoadCard(QFrame):
             msg.setStyleSheet(f"color:{NEGATIVE}; font-weight:600;")
             msg.setObjectName("loadWarning")
             v.addWidget(msg)
-        missing = []
-        if load.missing_volume:
-            missing.append("без объёма: " + ", ".join(load.missing_volume))
-        if load.missing_weight:
-            missing.append("без веса: " + ", ".join(load.missing_weight))
-        note = "По сумме объёмов и весов позиций, без учёта укладки"
-        if missing:
-            note += ". Не учтены позиции " + "; ".join(missing)
+        if load.packed:
+            packing = load.packing
+            first = packing.containers[0] if packing.containers else None
+            text = f"По укладке грузовых мест: нужно контейнеров — {packing.containers_needed}"
+            if first is not None:
+                text += (
+                    f"; первый заполнен на {fmt_pct(first.volume_share, 0)} по объёму "
+                    f"и {fmt_pct(first.weight_share, 0)} по весу"
+                )
+            packed = _label(text + ".")
+            packed.setWordWrap(True)
+            packed.setObjectName("loadPacking")
+            v.addWidget(packed)
+            row = QHBoxLayout()
+            button = QPushButton("Показать укладку")
+            button.setToolTip("Открыть грузовые места партии во вкладке «Контейнер»")
+            button.clicked.connect(self.showPacking)
+            self.packing_button = button
+            row.addWidget(button)
+            row.addStretch(1)
+            v.addLayout(row)
+            note = "Места уложены тем же алгоритмом, что во вкладке «Контейнер»"
+        else:
+            missing = []
+            if load.missing_volume:
+                missing.append("без объёма: " + ", ".join(load.missing_volume))
+            if load.missing_weight:
+                missing.append("без веса: " + ", ".join(load.missing_weight))
+            note = "По сумме объёмов и весов позиций, без учёта укладки"
+            if missing:
+                note += ". Не учтены позиции " + "; ".join(missing)
+            if load.missing_packaging and len(load.missing_packaging) < len(report.shipment.items):
+                note += ". Для укладки задайте упаковку: " + ", ".join(load.missing_packaging)
+            elif load.packing is not None and not load.packing.complete:
+                note += ". Укладка невозможна: " + "; ".join(load.packing.problems)
         hint = _label(note + ".", "caption")
         hint.setWordWrap(True)
         v.addWidget(hint)
@@ -315,6 +345,8 @@ class _ResultsBase(QTabWidget):
 class CostResultsPanel(_ResultsBase):
     """Вкладка «Импорт»: себестоимость единицы, итоги партии, загрузка контейнера."""
 
+    showPacking = Signal()  # «Показать укладку» — открыть места во вкладке «Контейнер»
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.report: CostReport | None = None
@@ -339,6 +371,7 @@ class CostResultsPanel(_ResultsBase):
             self.load_card = None
         if report.load is not None:
             self.load_card = LoadCard(report)
+            self.load_card.showPacking.connect(self.showPacking)
             self.load_layout.addWidget(self.load_card)
         self.unit_cards = [CostUnitCard(v, report.vat_payer) for v in report.unit_views()]
         self._replace_cards(self.unit_cards)

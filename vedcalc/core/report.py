@@ -114,7 +114,11 @@ class CostReport:
                 f"{fmt_money(load.weight_kg / 1000)} из {fmt_money(spec.max_cargo_kg / 1000)} т · "
                 f"{fmt_pct(load.weight_share, 0)}",
             ),
-            Row("Нужно контейнеров", str(load.containers_needed)),
+            Row(
+                "Нужно контейнеров",
+                str(load.containers_needed),
+                hint="по укладке грузовых мест" if load.packed else "по объёму и весу",
+            ),
         )
 
     def rates_rows(self) -> tuple[Row, ...]:
