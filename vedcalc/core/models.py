@@ -73,20 +73,66 @@ class AllocationMethod(StrEnum):
 
 class DutyKind(StrEnum):
     AD_VALOREM = "ad_valorem"  # X% от таможенной стоимости
-    SPECIFIC = "specific"  # Y EUR за кг/шт — не реализовано
-    COMBINED = "combined"  # X%, но не менее Y EUR за кг/шт — не реализовано
+    SPECIFIC = "specific"  # Y EUR за единицу (кг, л, шт…)
+    COMBINED = "combined"  # X%, но не менее Y EUR за единицу — большая из двух
+    SUM = "sum"  # X% плюс Y EUR за единицу
+
+
+class DutyUnit(StrEnum):
+    """Единица специфической ставки пошлины (как в ЕТТ)."""
+
+    KG = "kg"
+    T = "t"
+    PCS = "pcs"
+    L = "l"
+    PAIR = "pair"
+    CM3 = "cm3"
+    M2 = "m2"
+
+    @property
+    def label(self) -> str:
+        return {
+            DutyUnit.KG: "кг", DutyUnit.T: "т", DutyUnit.PCS: "шт", DutyUnit.L: "л",
+            DutyUnit.PAIR: "пар", DutyUnit.CM3: "см³", DutyUnit.M2: "м²",
+        }[self]  # fmt: skip
+
+    @property
+    def by_weight(self) -> bool:
+        """Ставка за массу — считается от веса нетто."""
+        return self in (DutyUnit.KG, DutyUnit.T)
 
 
 @dataclass(slots=True)
 class DutyRate:
     kind: DutyKind = DutyKind.AD_VALOREM
     percent: Decimal = ZERO
-    specific: Money | None = None  # для специфической/комбинированной: сумма за единицу
-    specific_unit: Unit | None = None
+    specific: Money | None = None  # сумма специфической части: Y EUR / USD…
+    specific_unit: DutyUnit | None = None  # …за per_quantity единиц
+    per_quantity: Decimal = Decimal(1)  # «за 1 кг», «за 1000 шт»
+    source: str = ""  # исходная строка ставки из справочника ЕТТ («50%, но не менее…»)
 
     @classmethod
     def ad_valorem(cls, percent: Decimal | int | str) -> DutyRate:
         return cls(DutyKind.AD_VALOREM, Decimal(percent))
+
+    @property
+    def has_specific(self) -> bool:
+        return self.kind is not DutyKind.AD_VALOREM
+
+    @property
+    def label(self) -> str:
+        if self.source:
+            return self.source
+        if not self.has_specific:
+            return f"{self.percent.normalize():f}%".replace(".", ",")
+        per = f"{self.per_quantity.normalize():f} " if self.per_quantity != 1 else ""
+        spec = f"{self.specific.amount} {self.specific.currency} за {per}{self.specific_unit.label}"
+        pct_txt = f"{self.percent.normalize():f}%".replace(".", ",")
+        return {
+            DutyKind.SPECIFIC: spec,
+            DutyKind.COMBINED: f"{pct_txt}, но не менее {spec}",
+            DutyKind.SUM: f"{pct_txt} плюс {spec}",
+        }[self.kind]
 
 
 class CostKind(StrEnum):
@@ -114,6 +160,8 @@ class Item:
     gross_weight_kg: Decimal | None = None
     net_weight_kg: Decimal | None = None
     volume_m3: Decimal | None = None
+    # Количество в единице специфической ставки (л, пары, м², см³), если она не кг/т/шт
+    duty_quantity: Decimal | None = None
 
 
 @dataclass(slots=True)

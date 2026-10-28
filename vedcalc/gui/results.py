@@ -88,9 +88,10 @@ class _UnitCard(QFrame):
         self.v.setContentsMargins(16, 14, 16, 16)
         self.v.setSpacing(12)
         head = QHBoxLayout()
-        head.addWidget(_label(name or "Позиция", "cardTitle"))
-        head.addWidget(_label(per, "chip"))
-        head.addStretch(1)
+        title = _label(name or "Позиция", "cardTitle")
+        title.setWordWrap(True)  # длинное наименование не должно распирать панель
+        head.addWidget(title, 1)
+        head.addWidget(_label(per, "chip"), 0, Qt.AlignmentFlag.AlignTop)
         qty = f"{quantity.normalize():f}".replace(".", ",")
         head.addWidget(_label(f"в партии {qty} {unit_label}", "muted"))
         self.v.addLayout(head)

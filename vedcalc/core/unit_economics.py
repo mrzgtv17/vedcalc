@@ -136,13 +136,14 @@ def _cost_lines(
     )
 
     duty = per(it.duty)
-    lines.append(
-        UnitLine(
-            "Ввозная пошлина",
-            f"{fmt_money(cv)} × {fmt_rate(src.duty.percent)}",
-            duty,
-        )
-    )
+    if src.duty.has_specific:
+        # Специфическая часть считается от количества всей позиции — показываем расчёт
+        # позиции и деление на количество
+        duty_formula = f"«{src.duty.label}»: {share(it.duty, 'пошлина позиции')}"
+        duty_hint = it.duty_formula
+    else:
+        duty_formula, duty_hint = f"{fmt_money(cv)} × {fmt_rate(src.duty.percent)}", ""
+    lines.append(UnitLine("Ввозная пошлина", duty_formula, duty, hint=duty_hint))
     parts.append(duty)
 
     excise = per(it.excise)

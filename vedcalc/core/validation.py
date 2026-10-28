@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from vedcalc.core.models import AllocationMethod, DutyKind, Shipment, TaxRegime
+from vedcalc.core.customs import DutyQuantityError, duty_base_quantity
+from vedcalc.core.models import AllocationMethod, Shipment, TaxRegime
 from vedcalc.core.money import HUNDRED, ZERO
 
 ALLOWED_IMPORT_VAT = (Decimal("22"), Decimal("10"), ZERO)
@@ -58,15 +59,13 @@ def validate_shipment(shipment: Shipment) -> list[Issue]:
             issues.append(Issue(f"{p}.excise", f"{who}: акциз не может быть отрицательным"))
         if item.vat_rate not in ALLOWED_IMPORT_VAT:
             issues.append(Issue(f"{p}.vat_rate", f"{who}: ставка НДС может быть 22%, 10% или 0%"))
-        if item.duty.kind is not DutyKind.AD_VALOREM:
-            issues.append(
-                Issue(
-                    f"{p}.duty",
-                    f"{who}: специфические и комбинированные ставки пошлины "
-                    "пока не поддерживаются — укажите адвалорную ставку в %",
-                )
-            )
-        elif item.duty.percent < 0:
+        if item.duty.has_specific:
+            try:
+                duty_base_quantity(item.duty, item)
+            except DutyQuantityError as exc:
+                field = "net_weight_kg" if item.duty.specific_unit.by_weight else "duty_quantity"
+                issues.append(Issue(f"{p}.{field}", f"{who}: {exc}"))
+        if item.duty.percent < 0:
             issues.append(Issue(f"{p}.duty", f"{who}: ставка пошлины не может быть отрицательной"))
         code = (item.tnved_code or "").strip()
         if code and not (code.isdigit() and len(code) == 10):

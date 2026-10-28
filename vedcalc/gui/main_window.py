@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
 
         h = self.menuBar().addMenu("Справка")
         h.addAction(self._action("Проверить обновления…", lambda: self.updates.check(manual=True)))
+        h.addAction(self._action("Справочник ТН ВЭД…", self.tnved_info))
         h.addAction(self._action("О программе", self.about))
 
     def _update_actions(self) -> None:
@@ -265,6 +266,27 @@ class MainWindow(QMainWindow):
                 self._error(f"Не удалось сохранить файл:\n{exc}")
                 return
             self.statusBar().showMessage(f"XLSX сохранён: {path}", 4000)
+
+    def tnved_info(self) -> None:
+        from vedcalc.core.tnved import STALE_AFTER_DAYS, load_directory
+
+        d = load_directory()
+        age = d.age_days()
+        state = (
+            f"<b>Справочник старше {STALE_AFTER_DAYS} дней</b> — обновите программу: "
+            "Справка → Проверить обновления."
+            if d.stale()
+            else "Актуален: обновляется вместе с программой не реже раза в месяц."
+        )
+        QMessageBox.information(
+            self,
+            "Справочник ТН ВЭД",
+            f"Коды ТН ВЭД ЕАЭС и ставки ввозной пошлины ЕТТ.<br><br>"
+            f"Данные на {d.actual_date:%d.%m.%Y} ({age} дн. назад), кодов: {len(d.entries)}.<br>"
+            f"{state}<br><br>Источник: <a href='https://www.tws.by/tws/tnved'>tws.by</a> — "
+            "бесплатная выгрузка «как есть». НДС, акцизы и меры регулирования в справочнике "
+            "нет — их видно по ссылке «Подробнее» в подборе кода.",
+        )
 
     def about(self) -> None:
         scale = self.calculator.fee_scale

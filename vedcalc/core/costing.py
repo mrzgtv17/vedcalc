@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from vedcalc.core.customs import duty_amount, import_vat
+from vedcalc.core.customs import duty_calc, import_vat
 from vedcalc.core.explain import Explainer, ExplainStep, fmt_money, fmt_number, fmt_rate
 from vedcalc.core.fees import FeeBracket, FeeScale
 from vedcalc.core.fx import AppliedRate, ResolvedRates
@@ -48,6 +48,7 @@ class ItemCost:
     import_vat: Decimal
     cost_net: Decimal  # себестоимость без НДС (при УСН — включая весь НДС)
     deductible_vat: Decimal  # НДС к вычету (0 при УСН)
+    duty_formula: str = ""  # расчёт пошлины по позиции с подставленными числами
 
     @property
     def cost_gross(self) -> Decimal:
@@ -250,14 +251,12 @@ def calculate(shipment: Shipment, rates: ResolvedRates, fee_scale: FeeScale) -> 
     items: list[ItemCost] = []
     for k, item in enumerate(shipment.items):
         cv = customs_values[k]
-        duty = duty_amount(item.duty, cv)
+        spec_rate = applied[item.duty.specific.currency].per_unit if item.duty.specific else None
+        calc = duty_calc(item.duty, cv, item, spec_rate)
+        duty = calc.amount
         ivat = import_vat(cv, duty, excise[k], item.vat_rate)
-        ex.add(
-            "Таможенные платежи",
-            f"Пошлина «{item.name}»",
-            f"{fmt_money(cv)} × {fmt_rate(item.duty.percent)} = {fmt_money(duty)}",
-            duty,
-        )
+        source = f" (ЕТТ: «{item.duty.source}»)" if item.duty.source else ""
+        ex.add("Таможенные платежи", f"Пошлина «{item.name}»{source}", calc.formula, duty)
         excise_part = f" + акциз {fmt_money(excise[k])}" if excise[k] else ""
         ex.add(
             "Таможенные платежи",
@@ -320,6 +319,7 @@ def calculate(shipment: Shipment, rates: ResolvedRates, fee_scale: FeeScale) -> 
                 import_vat=ivat,
                 cost_net=cost_net,
                 deductible_vat=deductible,
+                duty_formula=calc.formula,
             )
         )
 
@@ -334,6 +334,11 @@ def calculate(shipment: Shipment, rates: ResolvedRates, fee_scale: FeeScale) -> 
     warnings = list(rates.warnings)
     if scale_warning := fee_scale.validity_warning(on):
         warnings.append(scale_warning)
+    if any(i.duty.source for i in shipment.items):
+        from vedcalc.core.tnved import load_directory
+
+        if stale := load_directory().stale_warning():
+            warnings.append(stale)
     return CostResult(
         shipment_name=shipment.name,
         tax_regime=shipment.tax_regime,
