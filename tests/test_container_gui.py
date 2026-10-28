@@ -27,11 +27,11 @@ def euro_pallets(tab, qty=40):
     tab.recalc()
 
 
-def test_tab_is_in_main_window(qtbot):
+def test_tabs_in_main_window(qtbot):
     w = MainWindow(TEST_RATES, threaded=False)
     qtbot.addWidget(w)
     titles = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-    assert titles == ["Импорт", "Цена продажи", "Контейнер"]
+    assert titles == ["Импорт", "Цена продажи", "Контейнер", "WB"]
 
 
 def test_europallets_in_40dc(tab):
@@ -80,3 +80,25 @@ def test_max_twenty_kinds(tab):
     assert not tab.add_button.isEnabled()
     tab.recalc()
     assert tab.result.complete
+
+
+def test_wb_tab(qtbot):
+    from vedcalc.modules.wb_unit.calc import Target, TaxMode
+    from vedcalc.modules.wb_unit.gui import WbTab
+
+    tab = WbTab()
+    qtbot.addWidget(tab)
+    nbsp = " "
+    assert tab.profit_value.text() == f"284{nbsp}76".replace(nbsp, nbsp)[:0] + "284,76"
+    assert tab.line_text("Логистика на продажу") == "148,00"
+    assert tab.findChild(QLabel, "cmp:fbs:3").text() == "255,00"
+    tab.target_combo.set_value(Target.MARGIN)
+    tab._fields["target_value"].setText("25")
+    tab.recalc()
+    assert not tab.retail_edit.isEnabled()
+    assert tab.result.retail_price == tab._fields["retail_price"].value()
+    tab.tax_combo.set_value(TaxMode.INCOME_MINUS_EXPENSES)
+    assert tab._fields["tax_rate_pct"].text() == "15"
+    tab._fields["length_cm"].setText("0")
+    tab.recalc()
+    assert tab.result is None and "Длина" in tab.status.text()

@@ -8,5 +8,6 @@ from vedcalc.modules.registry import ModuleSpec
 def builtin_modules() -> list[ModuleSpec]:
     """Встроенные модули — вкладки после «Импорта» и «Цены продажи»."""
     from vedcalc.modules.container_calc import module_spec as container
+    from vedcalc.modules.wb_unit import module_spec as wb
 
-    return [container()]
+    return [container(), wb()]
