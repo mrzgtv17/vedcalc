@@ -288,3 +288,38 @@ def test_update_check_reports_latest(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: messages.append(a[2]))
     w.updates.check(manual=True)
     assert messages == [f"У вас последняя версия — {__version__}."]
+
+
+def test_deleting_rows_removes_exactly_that_row_and_recalculates(window, qtbot):
+    """Регрессия: «Удалить» удалял строку под курсором, расчёт оставался с ошибками."""
+    from PySide6.QtCore import Qt
+
+    calc, table = window.calculator, window.calculator.form.items_table
+    first = table.rows[0]
+    first["name"].setText("стеарин")
+    first["price"].setText("1000")
+    window.calculator.form.add_item()
+    window.calculator.form.add_item()
+    calc.touched = True
+    calc.recalc()
+    assert "Позиция 3: укажите наименование" in results(window).status.text()
+    table.setCurrentCell(0, 1)  # курсор стоит в заполненной первой строке
+    for row in (table.rows[2], table.rows[1]):
+        qtbot.mouseClick(row[table.DELETE_KEY], Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: calc.report is not None, timeout=2000)
+    assert [r["name"].text() for r in table.rows] == ["стеарин"]
+    assert table.rowCount() == 1
+    assert not results(window).status.isVisible() or "Позиция" not in results(window).status.text()
+
+
+def test_deleting_marked_row_does_not_break_recalc(window, qtbot):
+    calc, form = window.calculator, window.calculator.form
+    form.items_table.rows[0]["name"].setText("Насос")
+    form.items_table.rows[0]["price"].setText("100")
+    form.add_item()
+    calc.touched = True
+    calc.recalc()  # пустая вторая строка подсвечена ошибкой
+    form.items_table.remove_row(form.items_table.rows[1])
+    qtbot.wait(50)  # Qt уничтожает виджеты удалённой строки
+    calc.recalc()
+    assert calc.report is not None
