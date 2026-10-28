@@ -8,6 +8,7 @@ from datetime import date
 from decimal import Decimal
 from typing import ClassVar
 
+import shiboken6
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -103,7 +104,12 @@ class RowTable(QTableWidget):
 
     changed = Signal()
 
+    DELETE_KEY = "_delete"
+
     def __init__(self, columns: list[Column], parent: QWidget | None = None):
+        # Первая колонка — кнопка «✕»: удаляет именно свою строку. Общая кнопка «Удалить»
+        # удаляла строку, где последний раз стоял курсор, — часто не ту, что хотели.
+        columns = [Column(self.DELETE_KEY, "", 30, "Удалить строку"), *columns]
         super().__init__(0, len(columns), parent)
         self.columns = columns
         self.rows: list[dict] = []  # ключ колонки → виджет; «meta» — служебные данные
@@ -112,31 +118,40 @@ class RowTable(QTableWidget):
             self.setColumnWidth(n, c.width)
             if c.tooltip:
                 self.horizontalHeaderItem(n).setToolTip(c.tooltip)
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.verticalHeader().setDefaultSectionSize(30)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setMinimumHeight(110)
 
     def append(self, widgets: dict) -> None:
+        delete = QToolButton()
+        delete.setObjectName("rowDelete")
+        delete.setText("✕")
+        delete.setToolTip("Удалить строку")
+        delete.clicked.connect(lambda: self.remove_row(widgets))
+        widgets[self.DELETE_KEY] = delete
         r = self.rowCount()
         self.insertRow(r)
         for n, c in enumerate(self.columns):
             w = widgets[c.key]
             self.setCellWidget(r, n, w)
-            _connect(w, self.changed.emit)  # прочие ключи строки (meta) — не виджеты
+            if c.key != self.DELETE_KEY:
+                _connect(w, self.changed.emit)  # прочие ключи строки (meta) — не виджеты
         self.rows.append(widgets)
         self._fit_height()
         self.changed.emit()
 
-    def remove_current(self) -> None:
-        r = self.currentRow()
-        if r < 0 and self.rows:
-            r = len(self.rows) - 1
-        if r < 0:
+    def remove_row(self, widgets: dict) -> None:
+        """Удаляет строку по её виджетам (а не по «текущей» ячейке таблицы)."""
+        r = next((i for i, row in enumerate(self.rows) if row is widgets), None)
+        if r is None:
             return
         self.removeRow(r)
         del self.rows[r]
+        for key, w in widgets.items():
+            if isinstance(w, QWidget) and key != "meta":
+                w.deleteLater()
         self._fit_height()
         self.changed.emit()
 
@@ -230,10 +245,7 @@ class ShipmentForm(QWidget):
         buttons = QHBoxLayout()
         add = QPushButton("+ Позиция")
         add.clicked.connect(lambda: self.add_item())
-        remove = QPushButton("− Удалить")
-        remove.clicked.connect(self.items_table.remove_current)
         buttons.addWidget(add)
-        buttons.addWidget(remove)
         buttons.addStretch(1)
         v.addLayout(buttons)
         self._field_widgets["items"] = self.items_table
@@ -258,15 +270,12 @@ class ShipmentForm(QWidget):
                 ),
             )
         add.setMenu(menu)
-        remove = QPushButton("− Удалить")
-        remove.clicked.connect(self.costs_table.remove_current)
         hint = QLabel(
             "Доставка по РФ в рамках международной перевозки — НДС 0% (пп. 2.1 п. 1 ст. 164 НК РФ)"
         )
         hint.setStyleSheet("color: #6e6e73;")
         hint.setWordWrap(True)
         buttons.addWidget(add)
-        buttons.addWidget(remove)
         buttons.addWidget(hint, 1)
         v.addLayout(buttons)
         return box
@@ -524,7 +533,8 @@ class ShipmentForm(QWidget):
 
     def clear_marks(self) -> None:
         for w in getattr(self, "_marked", []):
-            mark_error(w, None)
+            if shiboken6.isValid(w):  # виджет удалённой строки уже уничтожен
+                mark_error(w, None)
         self._marked: list[QWidget] = []
 
     def mark_issues(self, issues: list[Issue]) -> None:

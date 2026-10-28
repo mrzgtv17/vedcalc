@@ -160,6 +160,19 @@ class CalculatorTab(QWidget):
         self._timer.start()
 
     def recalc(self) -> Report | None:
+        """Пересчёт. Неожиданная ошибка показывается, а не оставляет на экране старый итог."""
+        try:
+            return self._recalc()
+        except Exception as exc:  # pragma: no cover — защитная сетка
+            self._set_report(None)
+            self.results.show_message(
+                f"<b>Не удалось выполнить расчёт.</b><br>{escape(type(exc).__name__)}: "
+                f"{escape(str(exc))}<br>Сообщите разработчику, как это получилось.",
+                error=True,
+            )
+            return None
+
+    def _recalc(self) -> Report | None:
         self._timer.stop()
         # Курсы на дату расчёта запрашиваем сразу, даже если форма ещё не заполнена
         form_date = self.form.date_edit.date().toPython()
@@ -190,7 +203,7 @@ class CalculatorTab(QWidget):
                     self._set_report(None)
                     self.results.show_message(f"Загружаю курсы ЦБ РФ на {on:%d.%m.%Y}…")
                     return None
-                return self.recalc()  # синхронная загрузка уже завершилась
+                return self._recalc()  # синхронная загрузка уже завершилась
             return None
 
         try:

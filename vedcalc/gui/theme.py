@@ -107,6 +107,9 @@ QPushButton#primary:disabled {{ background: {SURFACE_ALT}; border-color: {BORDER
 QToolButton::menu-indicator {{ image: url("{chevron}"); subcontrol-position: right center; right: 6px; }}
 QToolButton[popupMode="2"] {{ padding-right: 24px; }}
 
+QToolButton#rowDelete {{ border: none; background: transparent; color: {TEXT_FAINT}; padding: 0; font-size: 12px; }}
+QToolButton#rowDelete:hover {{ color: {NEGATIVE}; background: {DANGER_SOFT}; border-radius: 6px; }}
+
 /* Таблицы */
 QTableWidget {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px;
