@@ -7,13 +7,18 @@ from pathlib import Path
 from PySide6.QtCore import QMarginsF
 from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
-from vedcalc.core.report import Report
-from vedcalc.reports.html import render_html
+from vedcalc.core.report import CostReport, PriceReport
+from vedcalc.reports.html import render_cost_html, render_price_html
 
 
-def write_pdf(report: Report, path: Path) -> None:
+def write_pdf(report: CostReport | PriceReport, path: Path) -> None:
+    font = QGuiApplication.font().family()
+    if isinstance(report, PriceReport):
+        html, title = render_price_html(report, font_family=font), report.title
+    else:
+        html, title = render_cost_html(report, font_family=font), report.shipment.name
     writer = QPdfWriter(str(path))
-    writer.setTitle(report.shipment.name)
+    writer.setTitle(title)
     writer.setCreator("Калькулятор ВЭД")
     writer.setPageLayout(
         QPageLayout(
@@ -24,5 +29,5 @@ def write_pdf(report: Report, path: Path) -> None:
         )
     )
     doc = QTextDocument()
-    doc.setHtml(render_html(report, font_family=QGuiApplication.font().family()))
+    doc.setHtml(html)
     doc.print_(writer)

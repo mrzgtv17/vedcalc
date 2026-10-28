@@ -1,4 +1,4 @@
-"""Панель результатов: упор на единицу товара (1 шт / кг / т), итоги партии — ниже."""
+"""Панели результатов: себестоимость импорта и цена продажи. Упор — на 1 шт / кг / т."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QScrollArea,
     QTabWidget,
     QTextBrowser,
@@ -20,12 +21,12 @@ from PySide6.QtWidgets import (
 
 from vedcalc.core.explain import fmt_money, fmt_pct
 from vedcalc.core.models import PriceMode
-from vedcalc.core.report import Report
-from vedcalc.core.unit_economics import UnitLine, UnitView
+from vedcalc.core.report import CostReport, PriceReport
+from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
 from vedcalc.core.validation import Issue
 from vedcalc.gui.theme import ERROR_BOX, INFO_BOX, WARN_BOX
 from vedcalc.gui.widgets import DecimalEdit, EnumCombo, SectionView, mark_error
-from vedcalc.reports.html import render_html
+from vedcalc.reports.html import load_warning, render_cost_html, render_price_html
 from vedcalc.reports.style import NEGATIVE, POSITIVE, TEXT_MUTED
 
 RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -55,12 +56,6 @@ def _card() -> tuple[QFrame, QVBoxLayout]:
     return frame, layout
 
 
-def _divider() -> QFrame:
-    line = QFrame()
-    line.setObjectName("divider")
-    return line
-
-
 class MetricTile(QFrame):
     """Крупное число с подписью: «Себестоимость 147 731,00 — с НДС 177 761,00»."""
 
@@ -75,7 +70,6 @@ class MetricTile(QFrame):
         cap.setWordWrap(True)
         self.value = _label(value, "metricValue")
         self.value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.value.setProperty("caption", caption)
         v.addWidget(cap)
         v.addWidget(self.value)
         if sub:
@@ -84,105 +78,53 @@ class MetricTile(QFrame):
             v.addWidget(s)
 
 
-class UnitCard(QFrame):
-    """Карточка позиции «за 1 шт / кг / т»: показатели, состав себестоимости, цены."""
+class _UnitCard(QFrame):
+    """Общая основа карточки «за 1 шт / кг / т»."""
 
-    def __init__(self, view: UnitView, report: Report):
+    def __init__(self, name: str, per: str, quantity: Decimal, unit_label: str):
         super().__init__()
         self.setObjectName("card")
-        self.view = view
-        osn = report.vat_payer
-        v = QVBoxLayout(self)
-        v.setContentsMargins(16, 14, 16, 16)
-        v.setSpacing(12)
-
+        self.v = QVBoxLayout(self)
+        self.v.setContentsMargins(16, 14, 16, 16)
+        self.v.setSpacing(12)
         head = QHBoxLayout()
-        head.addWidget(_label(view.name or "Позиция", "cardTitle"))
-        chip = _label(view.per, "chip")
-        head.addWidget(chip)
+        head.addWidget(_label(name or "Позиция", "cardTitle"))
+        head.addWidget(_label(per, "chip"))
         head.addStretch(1)
-        qty = f"{view.quantity.normalize():f}".replace(".", ",")
-        head.addWidget(_label(f"в партии {qty} {view.unit_label}", "muted"))
-        v.addLayout(head)
-
-        tiles = QHBoxLayout()
-        tiles.setSpacing(8)
-        vat_sub = (lambda x: f"с НДС {fmt_money(x)}") if osn else (lambda x: "")
+        qty = f"{quantity.normalize():f}".replace(".", ",")
+        head.addWidget(_label(f"в партии {qty} {unit_label}", "muted"))
+        self.v.addLayout(head)
         self.tiles: dict[str, MetricTile] = {}
+        self.tiles_row = QHBoxLayout()
+        self.tiles_row.setSpacing(8)
+        self.v.addLayout(self.tiles_row)
 
-        def tile(key: str, caption: str, value: Decimal, sub: str, accent: bool = False):
-            t = MetricTile(caption, fmt_money(value), sub, accent=accent)
-            self.tiles[key] = t
-            tiles.addWidget(t, 1)
+    def add_tile(self, key: str, caption: str, value: Decimal, sub: str, accent=False) -> None:
+        tile = MetricTile(caption, fmt_money(value), sub, accent=accent)
+        self.tiles[key] = tile
+        self.tiles_row.addWidget(tile, 1)
 
-        tile(
-            "cost",
-            "Себестоимость без НДС" if osn else "Себестоимость (УСН)",
-            view.cost_net,
-            vat_sub(view.cost_gross),
-        )
-        tile("break_even", "Безубыточная цена", view.break_even.net, vat_sub(view.break_even.gross))
-        if view.target is not None:
-            sub = vat_sub(view.target.gross)
-            profit = f"прибыль {fmt_money(view.target.net_profit)}"
-            tile(
-                "target",
-                "Цена по сценарию",
-                view.target.net,
-                f"{sub} · {profit}" if sub else profit,
-                accent=True,
-            )
-        v.addLayout(tiles)
-
-        v.addWidget(_label(f"Из чего складывается себестоимость {view.per}", "caption"))
-        v.addLayout(self._lines_grid(view.cost_lines))
-        v.addWidget(_divider())
-        v.addWidget(_label(f"Цена и прибыль {view.per}", "caption"))
-        v.addLayout(self._price_grid(view))
-
-    def _lines_grid(self, lines: tuple[UnitLine, ...]) -> QGridLayout:
+    def add_lines(self, caption: str, lines: tuple[UnitLine, ...]) -> None:
+        self.v.addWidget(_label(caption, "caption"))
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(4)
         grid.setColumnStretch(0, 1)
         for n, line in enumerate(lines):
-            label = _label(line.label, "muted" if line.informational else "", bold=line.strong)
-            value = _label(
-                line.text, "muted" if line.informational else "", right=True, bold=line.strong
-            )
+            muted = "muted" if line.informational else ""
+            label = _label(line.label, muted, bold=line.strong)
+            value = _label(line.text, muted, right=True, bold=line.strong)
             value.setObjectName(f"unit:{line.label}")
             if line.informational:
                 value.setStyleSheet(f"color:{TEXT_MUTED};")
+            if line.label == "Чистая прибыль" and line.value:
+                value.setStyleSheet(f"color:{POSITIVE if line.value > 0 else NEGATIVE};")
             tip = line.formula + (f"\n{line.hint}" if line.hint else "")
             label.setToolTip(tip)
             value.setToolTip(tip)
             grid.addWidget(label, n, 0)
             grid.addWidget(value, n, 1)
-        return grid
-
-    def _price_grid(self, view: UnitView) -> QGridLayout:
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(4)
-        grid.setColumnStretch(0, 1)
-        columns = [("Безубыточная", view.break_even)]
-        if view.target is not None:
-            columns.append(("По сценарию", view.target))
-        for c, (title, _) in enumerate(columns, 1):
-            grid.addWidget(_label(title, "caption", right=True), 0, c)
-        for n, line in enumerate(view.break_even.lines, 1):
-            grid.addWidget(_label(line.label, bold=line.strong), n, 0)
-            for c, (title, price) in enumerate(columns, 1):
-                cell = {x.label: x for x in price.lines}.get(line.label)
-                if cell is None:
-                    continue
-                value = _label(cell.text, right=True, bold=cell.strong)
-                value.setObjectName(f"price:{title}:{cell.label}")
-                value.setToolTip(cell.formula)
-                if cell.label == "Чистая прибыль" and cell.value:
-                    value.setStyleSheet(f"color:{POSITIVE if cell.value > 0 else NEGATIVE};")
-                grid.addWidget(value, n, c)
-        return grid
+        self.v.addLayout(grid)
 
     def metric_text(self, key: str) -> str | None:
         tile = self.tiles.get(key)
@@ -192,31 +134,227 @@ class UnitCard(QFrame):
         w = self.findChild(QLabel, f"unit:{label}")
         return w.text() if w else None
 
-    def price_text(self, column: str, label: str) -> str | None:
-        w = self.findChild(QLabel, f"price:{column}:{label}")
-        return w.text() if w else None
+
+class CostUnitCard(_UnitCard):
+    def __init__(self, view: UnitCostView, osn: bool):
+        super().__init__(view.name, view.per, view.quantity, view.unit_label)
+        self.view = view
+        self.add_tile(
+            "cost",
+            "Себестоимость без НДС" if osn else "Себестоимость (УСН)",
+            view.cost_net,
+            f"с НДС {fmt_money(view.cost_gross)}" if osn else "НДС включён",
+            accent=True,
+        )
+        if osn:
+            self.add_tile("vat", "НДС к вычету", view.deductible_vat, "возмещается из бюджета")
+        self.add_lines(f"Из чего складывается себестоимость {view.per}", view.cost_lines)
 
 
-class ResultsPanel(QTabWidget):
-    targetChanged = Signal()
+class PriceUnitCard(_UnitCard):
+    def __init__(self, view: UnitPriceView, osn: bool):
+        super().__init__(view.name, view.per, view.quantity, view.unit_label)
+        self.view = view
+        p = view.price
+        self.add_tile(
+            "cost",
+            "Себестоимость" + (" без НДС" if osn else ""),
+            view.cost_net,
+            f"+ стоимость денег {fmt_money(view.financing)}" if view.financing else "",
+        )
+        self.add_tile(
+            "price", "Цена без НДС" if osn else "Цена", p.net,
+            f"с НДС {fmt_money(p.gross)}" if osn else "", accent=True,
+        )  # fmt: skip
+        margin = fmt_pct(p.gross_profit / p.net) if p.net else "—"
+        self.add_tile("profit", "Чистая прибыль", p.net_profit, f"валовая маржа {margin}")
+        self.add_lines(f"Цена и прибыль {view.per}", p.lines)
+
+
+class LoadCard(QFrame):
+    """Подсказка: сколько контейнера занято по объёму и по весу."""
+
+    def __init__(self, report: CostReport):
+        super().__init__()
+        self.setObjectName("card")
+        load = report.load
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 14, 16, 14)
+        v.setSpacing(8)
+        v.addWidget(_label(f"Загрузка контейнера {load.spec.title}", "cardTitle"))
+        self.bars: dict[str, QProgressBar] = {}
+        for key, caption, share, text in (
+            (
+                "volume",
+                "Объём",
+                load.volume_share,
+                f"{fmt_money(load.volume_m3)} из {fmt_money(load.spec.volume_m3)} м³",
+            ),
+            (
+                "weight",
+                "Вес брутто",
+                load.weight_share,
+                f"{fmt_money(load.weight_kg / 1000)} из "
+                f"{fmt_money(load.spec.max_cargo_kg / 1000)} т",
+            ),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(_label(caption), 0)
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(min(100, int(share * 100)))
+            bar.setFormat(f"{fmt_pct(share, 0)} · {text}")
+            bar.setProperty("over", share > 1)
+            bar.setObjectName("loadBar")
+            self.bars[key] = bar
+            row.addWidget(bar, 1)
+            v.addLayout(row)
+        if warning := load_warning(report):
+            msg = _label(warning)
+            msg.setWordWrap(True)
+            msg.setStyleSheet(f"color:{NEGATIVE}; font-weight:600;")
+            msg.setObjectName("loadWarning")
+            v.addWidget(msg)
+        missing = []
+        if load.missing_volume:
+            missing.append("без объёма: " + ", ".join(load.missing_volume))
+        if load.missing_weight:
+            missing.append("без веса: " + ", ".join(load.missing_weight))
+        note = "По сумме объёмов и весов позиций, без учёта укладки"
+        if missing:
+            note += ". Не учтены позиции " + "; ".join(missing)
+        hint = _label(note + ".", "caption")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+
+    def bar_text(self, key: str) -> str:
+        return self.bars[key].format()
+
+
+class _ResultsBase(QTabWidget):
+    """Вкладки «Результаты» и «Детализация», строка статуса, скрытие пустых блоков."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.report: Report | None = None
-        self.unit_cards: list[UnitCard] = []
-
         page = QWidget()
         page.setObjectName("page")
-        v = QVBoxLayout(page)
-        v.setContentsMargins(2, 2, 6, 2)
-        v.setSpacing(12)
+        self.page_layout = QVBoxLayout(page)
+        self.page_layout.setContentsMargins(2, 2, 6, 2)
+        self.page_layout.setSpacing(12)
         self.status = QLabel()
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.TextFormat.RichText)
         self.status.hide()
-        v.addWidget(self.status)
+        self.page_layout.addWidget(self.status)
+        self.result_widgets: list[QWidget] = []
 
-        # Сценарий цены
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        self.addTab(scroll, "Результаты")
+        self.details = QTextBrowser()
+        self.details.setOpenExternalLinks(True)
+        self.addTab(self.details, "Детализация")
+
+        self.cards_host = QWidget()
+        self.cards_layout = QVBoxLayout(self.cards_host)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(12)
+
+    def _set_status(self, html: str | None, style: str = INFO_BOX) -> None:
+        if not html:
+            self.status.hide()
+            return
+        self.status.setStyleSheet(style)
+        self.status.setText(html)
+        self.status.show()
+
+    def _set_results_visible(self, visible: bool) -> None:
+        # Без результата блоки не показываем вовсе — пустые рамки только путают.
+        for w in self.result_widgets:
+            w.setVisible(visible)
+
+    def show_issues(self, issues: list[Issue], *, gentle: bool = False) -> None:
+        """gentle — расчёт только открыт и ещё не заполнен: подсказка вместо ошибки."""
+        items = "".join(f"<li>{escape(i.message)}</li>" for i in issues)
+        title = "Заполните данные для расчёта:" if gentle else "Проверьте ввод:"
+        self._set_status(
+            f"<b>{title}</b><ul style='margin:4px 0 0 -18px'>{items}</ul>",
+            INFO_BOX if gentle else ERROR_BOX,
+        )
+        self._set_results_visible(False)
+
+    def show_message(self, html: str, *, error: bool = False) -> None:
+        self._set_status(html, ERROR_BOX if error else INFO_BOX)
+        self._set_results_visible(False)
+
+    def _show_warnings(self, warnings: list[str]) -> None:
+        if warnings:
+            items = "".join(f"<li>{escape(w)}</li>" for w in warnings)
+            self._set_status(f"<ul style='margin:0 0 0 -18px'>{items}</ul>", WARN_BOX)
+        else:
+            self._set_status(None)
+
+    def _replace_cards(self, cards: list[QWidget]) -> None:
+        while self.cards_layout.count():
+            w = self.cards_layout.takeAt(0).widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        for card in cards:
+            self.cards_layout.addWidget(card)
+
+    def _set_details(self, html: str) -> None:
+        scroll = self.details.verticalScrollBar().value()
+        self.details.setHtml(html)
+        self.details.verticalScrollBar().setValue(scroll)
+
+
+class CostResultsPanel(_ResultsBase):
+    """Вкладка «Импорт»: себестоимость единицы, итоги партии, загрузка контейнера."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.report: CostReport | None = None
+        self.unit_cards: list[CostUnitCard] = []
+        self.load_card: LoadCard | None = None
+        self.load_host = QWidget()
+        self.load_layout = QVBoxLayout(self.load_host)
+        self.load_layout.setContentsMargins(0, 0, 0, 0)
+        self.batch_view = SectionView("Итого по партии")
+        for w in (self.load_host, self.cards_host, self.batch_view):
+            self.page_layout.addWidget(w)
+            self.result_widgets.append(w)
+        self.page_layout.addStretch(1)
+
+    def show_report(self, report: CostReport) -> None:
+        self.report = report
+        self._set_results_visible(True)
+        self._show_warnings(list(report.cost.warnings))
+        if self.load_card is not None:
+            self.load_card.setParent(None)
+            self.load_card.deleteLater()
+            self.load_card = None
+        if report.load is not None:
+            self.load_card = LoadCard(report)
+            self.load_layout.addWidget(self.load_card)
+        self.unit_cards = [CostUnitCard(v, report.vat_payer) for v in report.unit_views()]
+        self._replace_cards(self.unit_cards)
+        self.batch_view.set_rows(report.batch_section().rows)
+        self._set_details(render_cost_html(report, font_family=self.font().family()))
+
+
+class PriceResultsPanel(_ResultsBase):
+    """Вкладка «Цена продажи»: сценарий, цена и прибыль за единицу, итоги, стоимость денег."""
+
+    targetChanged = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.report: PriceReport | None = None
+        self.unit_cards: list[PriceUnitCard] = []
+
         self.target_box, tb = _card()
         tb.addWidget(_label("Сценарий цены", "cardTitle"))
         controls = QHBoxLayout()
@@ -234,34 +372,18 @@ class ResultsPanel(QTabWidget):
         self.target_error.setWordWrap(True)
         self.target_error.hide()
         tb.addWidget(self.target_error)
-        v.addWidget(self.target_box)
+        # Сценарий доступен и без результата: в нём может быть сама ошибка
+        self.page_layout.addWidget(self.target_box)
 
-        # Карточки «за единицу» по позициям
-        self.units_host = QWidget()
-        self.units_layout = QVBoxLayout(self.units_host)
-        self.units_layout.setContentsMargins(0, 0, 0, 0)
-        self.units_layout.setSpacing(12)
-        v.addWidget(self.units_host)
-
-        # Итоги по партии
         self.batch_view = SectionView("Итого по партии")
-        v.addWidget(self.batch_view)
-        v.addStretch(1)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(page)
-        self.addTab(scroll, "Результаты")
-
-        self.details = QTextBrowser()
-        self.details.setOpenExternalLinks(True)
-        self.addTab(self.details, "Детализация")
+        self.financing_view = SectionView("Стоимость денег")
+        for w in (self.cards_host, self.batch_view, self.financing_view):
+            self.page_layout.addWidget(w)
+            self.result_widgets.append(w)
+        self.page_layout.addStretch(1)
 
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        self.value_edit.textChanged.connect(self._on_target_edited)
-
-    # --- сценарий цены ---------------------------------------------------------------
+        self.value_edit.textChanged.connect(lambda _=None: self.targetChanged.emit())
 
     def set_target(self, mode: PriceMode, value: Decimal) -> None:
         for w in (self.mode_combo, self.value_edit):
@@ -283,87 +405,50 @@ class ResultsPanel(QTabWidget):
     def _on_mode_changed(self) -> None:
         # Подставляем осмысленное значение для нового режима
         mode = self.mode_combo.value()
-        if self.report is not None:
-            current = self.report.target or self.report.break_even
-            units = self.report.unit_views()
-            unit_price = (units[0].target or units[0].break_even).net if units else Decimal(0)
+        t = self.report.target if self.report else None
+        if t is not None:
+            views = self.report.unit_views()
             suggestion = {
                 PriceMode.MARKUP: Decimal(20),
                 PriceMode.MARGIN: Decimal(20),
-                PriceMode.NET_PROFIT: (
-                    current.net_profit if current.net_profit > 0 else Decimal(10000)
-                ),
-                PriceMode.UNIT_PRICE: unit_price,
-                PriceMode.PRICE: current.price_net,
+                PriceMode.NET_PROFIT: t.net_profit if t.net_profit > 0 else Decimal(10000),
+                PriceMode.UNIT_PRICE: views[0].price.net if views else Decimal(0),
+                PriceMode.PRICE: t.price_net,
             }[mode]
             self.value_edit.blockSignals(True)
             self.value_edit.set_value(suggestion)
             self.value_edit.blockSignals(False)
         self.targetChanged.emit()
 
-    def _on_target_edited(self) -> None:
-        self.targetChanged.emit()
-
-    # --- вывод -----------------------------------------------------------------------
-
-    def _set_status(self, html: str | None, style: str = INFO_BOX) -> None:
-        if not html:
-            self.status.hide()
-            return
-        self.status.setStyleSheet(style)
-        self.status.setText(html)
-        self.status.show()
-
-    def _set_results_enabled(self, enabled: bool) -> None:
-        # Без результата блоки не показываем вовсе — пустые рамки только путают.
-        for w in (self.target_box, self.units_host, self.batch_view):
-            w.setVisible(enabled)
-
     def show_issues(self, issues: list[Issue], *, gentle: bool = False) -> None:
-        """gentle — расчёт только открыт и ещё не заполнен: подсказка вместо ошибки."""
-        items = "".join(f"<li>{escape(i.message)}</li>" for i in issues)
-        title = "Заполните данные для расчёта:" if gentle else "Проверьте ввод:"
-        self._set_status(
-            f"<b>{title}</b><ul style='margin:4px 0 0 -18px'>{items}</ul>",
-            INFO_BOX if gentle else ERROR_BOX,
-        )
-        self._set_results_enabled(False)
+        super().show_issues(issues, gentle=gentle)
+        self.target_summary.hide()
 
     def show_message(self, html: str, *, error: bool = False) -> None:
-        self._set_status(html, ERROR_BOX if error else INFO_BOX)
-        self._set_results_enabled(False)
+        super().show_message(html, error=error)
+        self.target_summary.hide()
 
-    def show_report(self, report: Report) -> None:
+    def show_report(self, report: PriceReport) -> None:
         self.report = report
-        self._set_results_enabled(True)
-        if report.cost.warnings:
-            items = "".join(f"<li>{escape(w)}</li>" for w in report.cost.warnings)
-            self._set_status(f"<ul style='margin:0 0 0 -18px'>{items}</ul>", WARN_BOX)
-        else:
-            self._set_status(None)
-
-        if report.target is None:
+        self._set_results_visible(True)
+        self._set_status(None)
+        t = report.target
+        if t is None:
             self.target_error.setText(report.target_error or "")
             self.target_error.show()
             self.target_summary.hide()
         else:
-            t = report.target
             self.target_error.hide()
+            fin = f" · стоимость денег {fmt_money(t.financing)}" if t.financing else ""
             self.target_summary.setText(
                 f"{report.target_title}. Наценка {fmt_pct(t.markup)} · маржинальность "
-                f"{fmt_pct(t.margin)} · чистая прибыль партии {fmt_money(t.net_profit)}"
+                f"{fmt_pct(t.margin)} · чистая прибыль партии {fmt_money(t.net_profit)}{fin}"
             )
             self.target_summary.show()
-
-        for card in self.unit_cards:
-            card.setParent(None)
-            card.deleteLater()
-        self.unit_cards = [UnitCard(view, report) for view in report.unit_views()]
-        for card in self.unit_cards:
-            self.units_layout.addWidget(card)
-
+        self.unit_cards = [PriceUnitCard(v, report.vat_payer) for v in report.unit_views()]
+        self._replace_cards(self.unit_cards)
         self.batch_view.set_rows(report.batch_section().rows)
-
-        scroll = self.details.verticalScrollBar().value()
-        self.details.setHtml(render_html(report, font_family=self.font().family()))
-        self.details.verticalScrollBar().setValue(scroll)
+        fin_rows = report.financing_rows()
+        self.financing_view.set_rows(fin_rows)
+        self.financing_view.setVisible(bool(fin_rows))
+        self._set_details(render_price_html(report, font_family=self.font().family()))

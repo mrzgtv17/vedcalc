@@ -1,12 +1,16 @@
-"""Цена продажи B2B: безубыточная, с наценкой/маржой/целевой прибылью, обратный расчёт.
+"""Цена продажи B2B: с наценкой/маржой/целевой прибылью, обратный расчёт.
 
 Обозначения: C — себестоимость без НДС, P — выручка без НДС, v — НДС при продаже,
-t — налог на прибыль, r — доля расходов, зависящих от цены (без НДС), I — НДС к вычету.
+t — налог на прибыль, r — доля расходов, зависящих от цены (без НДС), I — НДС к вычету,
+F — стоимость денег (проценты за вложенные деньги, см. financing.py).
 
-    Валовая прибыль  G = P − C − r·P
+    Валовая прибыль  G = P − C − r·P − F
     Налог на прибыль   = max(0, G) × t
     Чистая прибыль     = G − налог
+    Наценка = G / (C + F), маржинальность = G / P
     НДС к доплате    D = P·v − I   (справочно, не расход)
+
+Работает с любой «базой»: CostResult (расчёт импорта) или PricingBasis (в т.ч. вручную).
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ from decimal import Decimal
 
 from vedcalc.core.costing import CostResult
 from vedcalc.core.explain import Explainer, ExplainStep, fmt_money, fmt_pct, fmt_rate
-from vedcalc.core.models import PriceMode
+from vedcalc.core.financing import FinancingResult, financing_cost
+from vedcalc.core.models import Financing, FinancingMode, PriceMode
 from vedcalc.core.money import (
     KOPECK,
     ZERO,
@@ -45,6 +50,7 @@ class ItemPrice:
     gross_profit: Decimal = ZERO
     profit_tax: Decimal = ZERO
     net_profit: Decimal = ZERO
+    financing: Decimal = ZERO  # доля стоимости денег
 
     def per_unit(self, value: Decimal) -> Decimal:
         """Сумма позиции → на 1 единицу (шт, кг или т — как задано в позиции)."""
@@ -74,10 +80,12 @@ class PriceResult:
     net_profit: Decimal
     deductible_vat: Decimal  # I
     vat_payable: Decimal  # D = P·v − I, справочно
-    markup: Decimal | None  # G / C
+    markup: Decimal | None  # G / (C + F)
     margin: Decimal | None  # G / P
     items: tuple[ItemPrice, ...]
     steps: tuple[ExplainStep, ...]
+    financing: Decimal = ZERO  # F
+    financing_detail: FinancingResult | None = None
 
     @property
     def price_gross(self) -> Decimal:
@@ -119,7 +127,15 @@ def _fail(path: str, message: str) -> InputError:
     return InputError([Issue(path, message)])
 
 
-def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
+def _financing(cost, financing: Financing | None, price_gross: Decimal) -> FinancingResult | None:
+    if financing is None or financing.mode is FinancingMode.OFF:
+        return None
+    return financing_cost(financing, cost, price_gross)
+
+
+def evaluate(
+    cost: CostResult, price_net: Decimal | int | str, financing: Financing | None = None
+) -> PriceResult:
     """Обратный расчёт: по цене без НДС — прибыль, наценка, маржа, НДС."""
     p = round_money(to_decimal(price_net))
     if p < 0:
@@ -129,12 +145,14 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
     t = pct(cost.sale.profit_tax_rate)
     sale_vat = round_money(p * pct(v_rate))
     dependent = round_money(p * _r(cost))
-    gross = p - c - dependent
+    fin = _financing(cost, financing, p + sale_vat)
+    f = fin.cost if fin else ZERO
+    gross = p - c - dependent - f
     tax = round_money(max(ZERO, gross) * t)
     net = gross - tax
     i = cost.deductible_vat
     d = sale_vat - i
-    markup = gross / c if c else None
+    markup = gross / (c + f) if c + f else None
     margin = gross / p if p else None
 
     weights = [it.cost_net for it in cost.items]
@@ -147,11 +165,12 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
         allocate(dependent, weights),
         allocate(gross, weights),
         allocate(tax, weights),
+        allocate(f, weights),
         strict=True,
     )
     items = tuple(
-        ItemPrice(it.name, it.quantity, it.unit, pn, vat, dep, g, tx, g - tx)
-        for it, pn, vat, dep, g, tx in shares
+        ItemPrice(it.name, it.quantity, it.unit, pn, vat, dep, g, tx, g - tx, fi)
+        for it, pn, vat, dep, g, tx, fi in shares
     )
 
     ex = Explainer()
@@ -173,11 +192,14 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
             f"{fmt_money(p)} × {fmt_rate(cost.sale.price_dependent_rate)} = {fmt_money(dependent)}",
             dependent,
         )
+    if fin:
+        ex.add(s, "Стоимость денег", fin.formula, f)
     dep_part = f" − {fmt_money(dependent)}" if dependent else ""
+    fin_part = f" − {fmt_money(f)}" if f else ""
     ex.add(
         s,
         "Валовая прибыль",
-        f"{fmt_money(p)} − {fmt_money(c)}{dep_part} = {fmt_money(gross)}",
+        f"{fmt_money(p)} − {fmt_money(c)}{dep_part}{fin_part} = {fmt_money(gross)}",
         gross,
     )
     ex.add(
@@ -187,7 +209,7 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
         tax,
     )
     ex.add(s, "Чистая прибыль", f"{fmt_money(gross)} − {fmt_money(tax)} = {fmt_money(net)}", net)
-    ex.add(s, "Наценка", f"{fmt_money(gross)} / {fmt_money(c)} = {fmt_pct(markup)}")
+    ex.add(s, "Наценка", f"{fmt_money(gross)} / {fmt_money(c + f)} = {fmt_pct(markup)}")
     ex.add(s, "Маржинальность", f"{fmt_money(gross)} / {fmt_money(p)} = {fmt_pct(margin)}")
     if cost.tax_regime.vat_payer:
         ex.add(
@@ -212,6 +234,8 @@ def evaluate(cost: CostResult, price_net: Decimal | int | str) -> PriceResult:
         margin=margin,
         items=items,
         steps=tuple(ex.steps),
+        financing=f,
+        financing_detail=fin,
     )
 
 
@@ -233,15 +257,23 @@ def break_even(cost: CostResult) -> PriceResult:
     return result
 
 
-def price_for(cost: CostResult, mode: PriceMode, value: Decimal | int | str) -> PriceResult:
-    """Цена с заданной доходностью. value — проценты для наценки/маржи, рубли — для прибыли."""
+def price_for(
+    cost: CostResult,
+    mode: PriceMode,
+    value: Decimal | int | str,
+    financing: Financing | None = None,
+) -> PriceResult:
+    """Цена с заданной доходностью. value — проценты для наценки/маржи, рубли — для прибыли.
+
+    Стоимость денег F зависит от цены (предоплата покупателя сокращает вложения), поэтому
+    при её учёте цена уточняется итерациями: P → F(P) → P… пока F не перестанет меняться.
+    """
     x = to_decimal(value)
-    c = cost.cost_net
     r = _r(cost)
     if r >= ONE:
         raise _fail("sale.price_dependent_rate", "Расходы от выручки должны быть меньше 100%")
     if mode is PriceMode.PRICE:
-        return evaluate(cost, x)
+        return evaluate(cost, x, financing)
     if mode is PriceMode.UNIT_PRICE:
         if len(cost.items) != 1:
             raise _fail(
@@ -251,11 +283,23 @@ def price_for(cost: CostResult, mode: PriceMode, value: Decimal | int | str) -> 
             )
         if x < 0:
             raise _fail("price", "Цена не может быть отрицательной")
-        return evaluate(cost, x * cost.items[0].quantity)
+        return evaluate(cost, x * cost.items[0].quantity, financing)
+
+    f = ZERO
+    for _ in range(60):
+        result = evaluate(cost, _target_price(cost, mode, x, r, cost.cost_net + f), financing)
+        if abs(result.financing - f) <= Decimal("0.005"):
+            return result
+        f = result.financing
+    return result
+
+
+def _target_price(cost, mode: PriceMode, x: Decimal, r: Decimal, full_cost: Decimal) -> Decimal:
+    """Цена без НДС от полной себестоимости C + F."""
     if mode is PriceMode.MARKUP:
         if x <= -100:
             raise _fail("markup", "Наценка должна быть больше −100%")
-        p = c * (ONE + pct(x)) / (ONE - r)
+        p = full_cost * (ONE + pct(x)) / (ONE - r)
     elif mode is PriceMode.MARGIN:
         m = pct(x)
         if m >= ONE:
@@ -264,21 +308,21 @@ def price_for(cost: CostResult, mode: PriceMode, value: Decimal | int | str) -> 
             raise _fail(
                 "margin", "Маржинальность вместе с расходами от выручки должна быть меньше 100%"
             )
-        p = c / (ONE - m - r)
+        p = full_cost / (ONE - m - r)
     elif mode is PriceMode.NET_PROFIT:
         t = pct(cost.sale.profit_tax_rate)
         if t >= ONE:
             raise _fail("sale.profit_tax_rate", "Налог на прибыль должен быть меньше 100%")
         if x < 0:
             # При убытке налог не возникает: G = N
-            p = (c + x) / (ONE - r)
+            p = (full_cost + x) / (ONE - r)
         else:
-            p = (c + x / (ONE - t)) / (ONE - r)
+            p = (full_cost + x / (ONE - t)) / (ONE - r)
     else:  # pragma: no cover
         raise ValueError(mode)
     if p < 0:
         raise _fail(str(mode), "Получилась отрицательная цена — проверьте параметры")
-    return evaluate(cost, p)
+    return p
 
 
 def vat_gap(cost: CostResult) -> VatGap:

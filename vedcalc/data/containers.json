@@ -1,0 +1,11 @@
+{
+  "source": "Внутренние размеры: ric-box.ru/morskie-kontejnery-razmery (сверено 28.10.2026). Лимиты веса груза заданы пользователем.",
+  "containers": [
+    {"code": "20DC",   "title": "20' DC",          "length_mm": 5898,  "width_mm": 2350, "height_mm": 2390, "max_cargo_kg": 27000},
+    {"code": "20HC",   "title": "20' HC",          "length_mm": 5898,  "width_mm": 2350, "height_mm": 2693, "max_cargo_kg": 27000},
+    {"code": "40DC",   "title": "40' DC (DV)",     "length_mm": 12032, "width_mm": 2352, "height_mm": 2393, "max_cargo_kg": 26000},
+    {"code": "40HC",   "title": "40' HC",          "length_mm": 12093, "width_mm": 2330, "height_mm": 2693, "max_cargo_kg": 26000},
+    {"code": "45PW",   "title": "45' PW",          "length_mm": 13513, "width_mm": 2444, "height_mm": 2549, "max_cargo_kg": 26000},
+    {"code": "45HCPW", "title": "45' HC PW",       "length_mm": 13513, "width_mm": 2444, "height_mm": 2670, "max_cargo_kg": 26000}
+  ]
+}

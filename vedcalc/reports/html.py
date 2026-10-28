@@ -6,13 +6,14 @@ flex-вёрстки, поэтому «карточки» сделаны табл
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 
 from vedcalc import __version__
-from vedcalc.core.explain import fmt_money, fmt_number
-from vedcalc.core.report import Report, Row
-from vedcalc.core.unit_economics import UnitLine, UnitPrice, UnitView
+from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
+from vedcalc.core.report import CostReport, PriceReport, Row
+from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
 from vedcalc.reports.style import (
     ACCENT,
     ACCENT_HOVER,
@@ -109,62 +110,28 @@ def _metric(caption: str, value: Decimal, sub: str, *, accent: bool = False) -> 
     )
 
 
-def _unit_section(view: UnitView, report: Report) -> str:
-    osn = report.vat_payer
-    qty = fmt_number(view.quantity)
-
-    def vat_sub(price: UnitPrice | None, value: Decimal | None = None) -> str:
-        if not osn:
-            return ""
-        return f"с НДС {fmt_money(value if value is not None else price.gross)}"
-
-    metrics = [
-        _metric(
-            "Себестоимость без НДС" if osn else "Себестоимость (УСН)",
-            view.cost_net,
-            vat_sub(None, view.cost_gross),
-        ),
-        _metric("Безубыточная цена", view.break_even.net, vat_sub(view.break_even)),
-    ]
-    if view.target is not None:
-        profit = f"прибыль {fmt_money(view.target.net_profit)}"
-        sub = vat_sub(view.target)
-        metrics.append(
-            _metric(
-                "Цена по сценарию",
-                view.target.net,
-                f"{sub} · {profit}" if sub else profit,
-                accent=True,
-            )
-        )
+def _metrics_row(metrics: list[str]) -> str:
     spacer = '<td width="1%">&nbsp;</td>'
-    parts = [
-        f"<h2>{escape(view.name or 'Позиция')} "
-        f'<span class="chip" style="font-size:10pt">&nbsp;{escape(view.per)}&nbsp;</span></h2>',
-        f'<p class="muted small">В партии {qty} {escape(view.unit_label)}. Все суммы ниже — '
-        f"{escape(view.per)}, в рублях.</p>",
+    return (
         f'<table width="100%" cellspacing="0" cellpadding="8"><tr>{spacer.join(metrics)}</tr>'
-        "</table>",
-        f"<h3>Себестоимость {escape(view.per)}</h3>",
-        _lines_table(view.cost_lines),
-        f"<h3>Безубыточная цена {escape(view.per)}</h3>",
-        _lines_table(view.break_even.lines),
-    ]
-    if view.target is not None:
-        parts += [
-            f"<h3>{escape(report.target_title)} — {escape(view.per)}</h3>",
-            _lines_table(view.target.lines),
-        ]
-    return "".join(parts)
+        "</table>"
+    )
 
 
-def _steps(report: Report) -> str:
-    out = [
-        "<h2>Расчёт по партии</h2>",
-        '<p class="muted small">Таможенные платежи начисляются на позицию целиком; суммы '
-        "на единицу выше получены делением на количество и округлены до копеек.</p>",
-    ]
-    for title, steps in report.step_groups():
+def _item_heading(name: str, per: str, quantity: Decimal, unit_label: str) -> str:
+    return (
+        f"<h2>{escape(name or 'Позиция')} "
+        f'<span class="chip" style="font-size:10pt">&nbsp;{escape(per)}&nbsp;</span></h2>'
+        f'<p class="muted small">В партии {fmt_number(quantity)} {escape(unit_label)}. '
+        f"Все суммы ниже — {escape(per)}, в рублях.</p>"
+    )
+
+
+def _steps(groups, intro: str = "") -> str:
+    out = []
+    if intro:
+        out.append(f'<p class="muted small">{escape(intro)}</p>')
+    for title, steps in groups:
         out.append(f"<h3>{escape(title)}</h3>")
         out.append('<table width="100%" cellspacing="0" cellpadding="4">')
         for s in steps:
@@ -176,30 +143,157 @@ def _steps(report: Report) -> str:
     return "".join(out)
 
 
-def render_html(report: Report, *, details: bool = True, font_family: str | None = None) -> str:
-    s = report.shipment
-    warnings = "".join(
+def _page(title: str, subtitle: str, body: list[str], font_family: str | None) -> str:
+    return "".join(
+        [
+            f"<html><head><meta charset='utf-8'><style>{_style(font_family)}</style></head><body>",
+            f"<h1>{escape(title)}</h1>",
+            f'<p class="muted">{escape(subtitle)}</p>',
+            *body,
+            '<p class="muted small"><br>Сформировано ',
+            f"{datetime.now():%d.%m.%Y %H:%M} · Калькулятор ВЭД {__version__}. Оценка для "
+            "управленческого решения; не заменяет консультацию таможенного брокера и "
+            "бухгалтера.</p></body></html>",
+        ]
+    )
+
+
+def _warnings(warnings) -> str:
+    return "".join(
         f'<table width="100%" cellpadding="8" cellspacing="0"><tr><td class="warn">'
         f"⚠ {escape(w)}</td></tr></table>"
-        for w in report.cost.warnings
+        for w in warnings
     )
-    parts = [
-        f"<html><head><meta charset='utf-8'><style>{_style(font_family)}</style></head><body>",
-        f"<h1>{escape(s.name)}</h1>",
-        f'<p class="muted">Дата расчёта {s.calc_date:%d.%m.%Y} · {escape(s.delivery_mode.label)}'
-        f" · {escape(report.cost.tax_regime.label)}</p>",
-        warnings,
+
+
+# --- себестоимость импорта ----------------------------------------------------------------
+
+
+def _cost_unit_section(view: UnitCostView, osn: bool) -> str:
+    metrics = [
+        _metric(
+            "Себестоимость без НДС" if osn else "Себестоимость (УСН)",
+            view.cost_net,
+            f"с НДС {fmt_money(view.cost_gross)}" if osn else "",
+            accent=True,
+        )
     ]
-    parts += [_unit_section(view, report) for view in report.unit_views()]
+    if osn:
+        metrics.append(_metric("НДС к вычету", view.deductible_vat, "возмещается из бюджета"))
+    return "".join(
+        [
+            _item_heading(view.name, view.per, view.quantity, view.unit_label),
+            _metrics_row(metrics),
+            f"<h3>Себестоимость {escape(view.per)}</h3>",
+            _lines_table(view.cost_lines),
+        ]
+    )
+
+
+def load_warning(report: CostReport) -> str | None:
+    load = report.load
+    if load is None or load.fits:
+        return None
+    return (
+        f"Груз не помещается в один контейнер {load.spec.title}: ограничивает {load.binding}, "
+        f"нужно контейнеров: {load.containers_needed}."
+    )
+
+
+def render_cost_html(
+    report: CostReport, *, details: bool = True, font_family: str | None = None
+) -> str:
+    s = report.shipment
+    warnings = list(report.cost.warnings)
+    if w := load_warning(report):
+        warnings.append(w)
+    body = [_warnings(warnings)]
+    body += [_cost_unit_section(v, report.vat_payer) for v in report.unit_views()]
     batch = report.batch_section()
-    parts += [f"<h2>{escape(batch.title)}</h2>", _rows_table(batch.rows)]
+    body += [f"<h2>{escape(batch.title)}</h2>", _rows_table(batch.rows)]
+    if report.load is not None:
+        body += [
+            f"<h2>Загрузка контейнера {escape(report.load.spec.title)}</h2>",
+            '<p class="muted small">По сумме объёмов и весов позиций, без учёта укладки.</p>',
+            _rows_table(report.load_rows()),
+        ]
     if details:
-        parts.append(_steps(report))
-    parts += [
-        "<h2>Курсы и методика</h2>",
-        _rows_table(report.rates_rows() + report.method_rows()),
-        f'<p class="muted small"><br>Сформировано {report.generated:%d.%m.%Y %H:%M} · '
-        f"Калькулятор ВЭД {__version__}. Оценка для управленческого решения; не заменяет "
-        "консультацию таможенного брокера и бухгалтера.</p></body></html>",
+        body += [
+            "<h2>Расчёт по партии</h2>",
+            _steps(
+                report.step_groups(),
+                "Таможенные платежи начисляются на позицию целиком; суммы на единицу выше "
+                "получены делением на количество и округлены до копеек.",
+            ),
+        ]
+    body += ["<h2>Курсы и методика</h2>", _rows_table(report.rates_rows() + report.method_rows())]
+    subtitle = (
+        f"Себестоимость импорта · дата расчёта {s.calc_date:%d.%m.%Y} · "
+        f"{s.delivery_mode.label} · {report.cost.tax_regime.label}"
+    )
+    return _page(s.name, subtitle, body, font_family)
+
+
+# --- цена продажи -------------------------------------------------------------------------
+
+
+def _price_unit_section(view: UnitPriceView, report: PriceReport) -> str:
+    osn = report.vat_payer
+    p = view.price
+    vat = (lambda x: f"с НДС {fmt_money(x)}") if osn else (lambda x: "")
+    metrics = [
+        _metric(
+            "Себестоимость" + (" без НДС" if osn else ""),
+            view.cost_net,
+            f"+ стоимость денег {fmt_money(view.financing)}" if view.financing else "",
+        ),
+        _metric("Цена без НДС" if osn else "Цена", p.net, vat(p.gross), accent=True),
+        _metric(
+            "Чистая прибыль",
+            p.net_profit,
+            f"маржа {fmt_pct(p.gross_profit / p.net) if p.net else '—'}",
+        ),
     ]
-    return "".join(parts)
+    return "".join(
+        [
+            _item_heading(view.name, view.per, view.quantity, view.unit_label),
+            _metrics_row(metrics),
+            f"<h3>{escape(report.target_title)} — {escape(view.per)}</h3>",
+            _lines_table(p.lines),
+        ]
+    )
+
+
+def _periods_table(report: PriceReport) -> str:
+    rows = report.period_rows()
+    if not rows:
+        return ""
+    out = [
+        '<table width="100%" cellspacing="0" cellpadding="4"><tr>'
+        '<th class="left">Дни</th><th>Длительность</th><th>Вложено</th><th>Проценты</th></tr>'
+    ]
+    for days, length, balance, interest in rows:
+        out.append(
+            f"<tr><td>{days}</td><td class=num>{length}</td><td class=num>{balance}</td>"
+            f"<td class=num>{interest}</td></tr>"
+        )
+    out.append("</table>")
+    return "".join(out)
+
+
+def render_price_html(
+    report: PriceReport, *, details: bool = True, font_family: str | None = None
+) -> str:
+    body: list[str] = []
+    if report.target is None:
+        body.append(_warnings([report.target_error or "Цену рассчитать не удалось"]))
+    body += [_price_unit_section(v, report) for v in report.unit_views()]
+    batch = report.batch_section()
+    body += [f"<h2>{escape(batch.title)}</h2>", _rows_table(batch.rows)]
+    if fin_rows := report.financing_rows():
+        body += ["<h2>Стоимость денег</h2>", _rows_table(fin_rows), _periods_table(report)]
+    if details and report.step_groups():
+        body += ["<h2>Расчёт по партии</h2>", _steps(report.step_groups())]
+    body += ["<h2>Методика</h2>", _rows_table(report.method_rows())]
+    subtitle = f"Цена продажи · {report.target_title} · {report.basis.source_label}"
+    return _page(report.title, subtitle, body, font_family)

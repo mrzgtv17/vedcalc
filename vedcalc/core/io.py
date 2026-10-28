@@ -16,8 +16,12 @@ from vedcalc.core.models import (
     DeliveryMode,
     DutyKind,
     DutyRate,
+    Financing,
+    FinancingMode,
     Item,
+    ManualCost,
     PriceMode,
+    PricingSource,
     SaleParams,
     Shipment,
     TaxRegime,
@@ -43,6 +47,52 @@ def _opt(d: Decimal | None) -> str | None:
 
 def _dec_opt(s: str | None) -> Decimal | None:
     return None if s is None else Decimal(s)
+
+
+_FIN_DECIMALS = ("annual_rate", "borrowed_share", "supplier_prepay_pct", "buyer_prepay_pct")
+_FIN_INTS = (
+    "loan_days",
+    "supplier_balance_day",
+    "transit_days",
+    "customs_days",
+    "delivery_days",
+    "buyer_prepay_day",
+    "buyer_deferral_days",
+)
+
+
+def _financing_to_dict(f: Financing) -> dict[str, Any]:
+    data: dict[str, Any] = {"mode": f.mode.value, "loan_amount": _opt(f.loan_amount)}
+    data |= {k: str(getattr(f, k)) for k in _FIN_DECIMALS}
+    data |= {k: getattr(f, k) for k in _FIN_INTS}
+    return data
+
+
+def _financing_from_dict(d: dict | None) -> Financing:
+    if not d:
+        return Financing()
+    f = Financing(mode=FinancingMode(d.get("mode", FinancingMode.OFF)))
+    f.loan_amount = _dec_opt(d.get("loan_amount"))
+    for k in _FIN_DECIMALS:
+        if k in d:
+            setattr(f, k, Decimal(d[k]))
+    for k in _FIN_INTS:
+        if k in d:
+            setattr(f, k, int(d[k]))
+    return f
+
+
+def _manual_from_dict(d: dict | None) -> ManualCost:
+    if not d:
+        return ManualCost()
+    return ManualCost(
+        name=d.get("name", "Товар"),
+        quantity=Decimal(d.get("quantity", "1")),
+        unit=Unit(d.get("unit", Unit.PCS)),
+        unit_cost_net=Decimal(d.get("unit_cost_net", "0")),
+        unit_deductible_vat=Decimal(d.get("unit_deductible_vat", "0")),
+        tax_regime=TaxRegime(d.get("tax_regime", TaxRegime.OSN)),
+    )
 
 
 def shipment_to_dict(s: Shipment) -> dict[str, Any]:
@@ -96,6 +146,16 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                 "price_dependent_rate": str(s.sale.price_dependent_rate),
                 "target_mode": s.sale.target_mode.value,
                 "target_value": str(s.sale.target_value),
+            },
+            "financing": _financing_to_dict(s.financing),
+            "pricing_source": s.pricing_source.value,
+            "manual_cost": {
+                "name": s.manual_cost.name,
+                "quantity": str(s.manual_cost.quantity),
+                "unit": s.manual_cost.unit.value,
+                "unit_cost_net": str(s.manual_cost.unit_cost_net),
+                "unit_deductible_vat": str(s.manual_cost.unit_deductible_vat),
+                "tax_regime": s.manual_cost.tax_regime.value,
             },
         },
     }
@@ -163,6 +223,9 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
                 target_mode=PriceMode(sale.get("target_mode", PriceMode.MARKUP)),
                 target_value=Decimal(sale.get("target_value", "20")),
             ),
+            financing=_financing_from_dict(s.get("financing")),
+            pricing_source=PricingSource(s.get("pricing_source", PricingSource.IMPORT)),
+            manual_cost=_manual_from_dict(s.get("manual_cost")),
         )
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc
