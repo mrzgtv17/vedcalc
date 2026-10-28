@@ -101,6 +101,8 @@ QPushButton, QToolButton {{
 }}
 QPushButton:hover, QToolButton:hover {{ background: {SURFACE_ALT}; }}
 QPushButton:pressed, QToolButton:pressed {{ background: {CODE_BG}; }}
+QPushButton#segment {{ padding: 4px 14px; }}
+QPushButton#segment:checked {{ background: {ACCENT_SOFT}; border-color: {ACCENT}; color: {ACCENT_HOVER}; font-weight: 600; }}
 QPushButton#primary {{ background: {ACCENT}; border-color: {ACCENT}; color: #FFFFFF; font-weight: 600; }}
 QPushButton#primary:hover {{ background: {ACCENT_HOVER}; border-color: {ACCENT_HOVER}; }}
 QPushButton#primary:disabled {{ background: {SURFACE_ALT}; border-color: {BORDER}; color: {TEXT_FAINT}; }}
