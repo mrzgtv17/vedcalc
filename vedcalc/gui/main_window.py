@@ -7,7 +7,7 @@ from importlib import resources
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
 from vedcalc import __version__
@@ -28,7 +28,7 @@ from vedcalc.gui.calculator import CalculatorTab
 from vedcalc.gui.form import PricingState, new_shipment
 from vedcalc.gui.prefs import app_settings
 from vedcalc.gui.pricing_tab import PricingTab
-from vedcalc.gui.theme import apply_theme
+from vedcalc.gui.theme import MODES, apply_theme, saved_mode, set_mode
 from vedcalc.gui.updates import UpdateController
 from vedcalc.modules import builtin_modules
 from vedcalc.modules.registry import ModuleSpec, modules
@@ -131,6 +131,18 @@ class MainWindow(QMainWindow):
         m.addAction(self._action("Мои реквизиты…", self.edit_requisites))
         m.addSeparator()
         m.addAction(self._action("Выход", self.close, QKeySequence.StandardKey.Quit))
+
+        view = self.menuBar().addMenu("Вид")
+        theme = view.addMenu("Тема")
+        group = QActionGroup(self)
+        self.theme_actions: dict[str, QAction] = {}
+        for mode, title in MODES.items():
+            action = QAction(title, self, checkable=True)
+            action.setChecked(mode == saved_mode())
+            action.triggered.connect(lambda _=False, m=mode: set_mode(m))
+            group.addAction(action)
+            theme.addAction(action)
+            self.theme_actions[mode] = action
 
         h = self.menuBar().addMenu("Справка")
         h.addAction(self._action("Проверить обновления…", lambda: self.updates.check(manual=True)))

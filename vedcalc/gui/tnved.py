@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from vedcalc.core.tnved import TnvedEntry, load_directory
-from vedcalc.gui.theme import ASSETS
+from vedcalc.gui.theme import icon_path, notifier
 
 
 class TnvedEdit(QLineEdit):
@@ -34,11 +34,17 @@ class TnvedEdit(QLineEdit):
         self.setMaxLength(10)
         self.setPlaceholderText("10 цифр")
         self.entry: TnvedEntry | None = None
-        search = QAction(QIcon(str(ASSETS / "search.svg")), "Подобрать код по названию", self)
-        search.triggered.connect(self.pick)
-        self.addAction(search, QLineEdit.ActionPosition.TrailingPosition)
+        self.search_action = QAction(
+            QIcon(str(icon_path("search"))), "Подобрать код по названию", self
+        )
+        self.search_action.triggered.connect(self.pick)
+        self.addAction(self.search_action, QLineEdit.ActionPosition.TrailingPosition)
+        notifier().changed.connect(self._update_icon)
         self.textChanged.connect(self._lookup)
         self._lookup(self.text(), emit=False)
+
+    def _update_icon(self) -> None:
+        self.search_action.setIcon(QIcon(str(icon_path("search"))))
 
     def _lookup(self, text: str, emit: bool = True) -> None:
         directory = load_directory()

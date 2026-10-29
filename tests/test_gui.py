@@ -207,11 +207,11 @@ def test_invalid_input_is_highlighted(example):
     assert example.calculator.report is None
     assert "Проверьте ввод" in results(example).status.text()
     assert "не число" in row(example, "quantity").toolTip()
-    assert "border" in row(example, "quantity").styleSheet()
+    assert row(example, "quantity").property("tone") == "fieldError"
     assert not example.pdf_action.isEnabled()
     row(example, "quantity").setText("1")
     example.calculator.recalc()
-    assert row(example, "quantity").styleSheet() == ""
+    assert not row(example, "quantity").property("tone")
 
 
 def test_price_modes(example):
@@ -447,7 +447,7 @@ def test_tnved_code_fills_duty(window):
     assert shipment.items[0].duty.percent == 7 and not shipment.items[0].duty.source
     # Неизвестный код подсвечивается, ставка остаётся ручной
     r["tnved"].setText("0000000000")
-    assert r["tnved"].unknown and "border" in r["tnved"].styleSheet()
+    assert r["tnved"].unknown and r["tnved"].property("tone") == "warnBorder"
     # Подбор по названию
     dialog = TnvedSearchDialog("аккумуляторы свинцовые")
     assert dialog.results and dialog.selected is not None

@@ -13,8 +13,8 @@ from vedcalc.core.explain import fmt_money, fmt_pct
 from vedcalc.core.fees import FeeScale
 from vedcalc.core.report import PriceReport
 from vedcalc.core.whatif import ScenarioResult, Table, WhatIf, sensitivity
+from vedcalc.gui.theme import current, notifier
 from vedcalc.gui.widgets import DecimalEdit, mark_error
-from vedcalc.reports.style import ACCENT, BORDER, NEGATIVE, POSITIVE, SURFACE_ALT, TEXT_MUTED
 
 
 def _label(text: str = "", name: str = "", *, right: bool = False, bold: bool = False) -> QLabel:
@@ -48,6 +48,7 @@ class ProfitChart(QWidget):
         if len(self.rows) < 2:
             return
         p = QPainter(self)
+        pal = current()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont(self.font())
         font.setPointSizeF(font.pointSizeF() * 0.85)
@@ -67,12 +68,12 @@ class ProfitChart(QWidget):
                 plot.bottom() - (y - y_min) / (y_max - y_min) * plot.height(),
             )
 
-        p.setPen(QPen(QColor(BORDER), 1))
+        p.setPen(QPen(QColor(pal.border), 1))
         p.drawRect(plot)
         zero = pt(x_min, 0).y()
-        p.setPen(QPen(QColor(TEXT_MUTED), 1, Qt.PenStyle.DashLine))
+        p.setPen(QPen(QColor(pal.text_muted), 1, Qt.PenStyle.DashLine))
         p.drawLine(QPointF(plot.left(), zero), QPointF(plot.right(), zero))
-        p.setPen(QColor(TEXT_MUTED))
+        p.setPen(QColor(pal.text_muted))
         for value in (y_min, 0.0, y_max):
             y = pt(x_min, value).y()
             p.drawText(QRectF(0, y - 8, left - 6, 16), Qt.AlignmentFlag.AlignRight,
@@ -82,12 +83,12 @@ class ProfitChart(QWidget):
             label = row.scenario.label.replace("текущий", "0%")
             p.drawText(QRectF(point.x() - 30, plot.bottom() + 4, 60, 16),
                        Qt.AlignmentFlag.AlignHCenter, label)  # fmt: skip
-        p.setPen(QPen(QColor(ACCENT), 2))
+        p.setPen(QPen(QColor(pal.accent), 2))
         points = [pt(x, y) for x, y in zip(xs, ys, strict=True)]
         for a, b in pairwise(points):
             p.drawLine(a, b)
         for row, point in zip(self.rows, points, strict=True):
-            color = POSITIVE if row.net_profit >= 0 else NEGATIVE
+            color = pal.positive if row.net_profit >= 0 else pal.negative
             p.setBrush(QColor(color))
             p.setPen(QPen(QColor(color), 1))
             radius = 4.5 if row.scenario.is_base else 3
@@ -122,6 +123,7 @@ class WhatIfView(QFrame):
         self.body = QVBoxLayout()
         self.body.setSpacing(12)
         v.addLayout(self.body)
+        notifier().changed.connect(self.refresh)  # цвета таблиц — из текущей темы
 
     def set_report(self, report: PriceReport | None, fee_scale: FeeScale | None) -> None:
         self.report, self.fee_scale = report, fee_scale
@@ -178,15 +180,16 @@ class WhatIfView(QFrame):
         grid.setColumnStretch(0, 1)
         for c, head in enumerate(self.whatif.heads):
             grid.addWidget(_label(head, "caption", right=c > 0), 0, c)
+        pal = current()
         for r, row in enumerate(table.rows, 1):
             cost = row.unit_cost if row.unit_cost is not None else row.cost_net
-            profit_color = POSITIVE if row.net_profit >= 0 else NEGATIVE
+            profit_color = pal.positive if row.net_profit >= 0 else pal.negative
             delta_color = (
-                TEXT_MUTED
+                pal.text_muted
                 if row.profit_delta == 0
-                else POSITIVE
+                else pal.positive
                 if row.profit_delta > 0
-                else NEGATIVE
+                else pal.negative
             )
             cells = (
                 (row.scenario.label, ""),
@@ -200,7 +203,7 @@ class WhatIfView(QFrame):
                 label.setObjectName(f"whatif:{table.title}:{r}:{c}")
                 style = f"color:{color};" if color else ""
                 if row.scenario.is_base:
-                    style += f"background:{SURFACE_ALT};"
+                    style += f"background:{pal.surface_alt};"
                 label.setStyleSheet(style + "padding:2px 4px;")
                 grid.addWidget(label, r, c)
         v.addLayout(grid)

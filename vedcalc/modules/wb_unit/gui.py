@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
-from vedcalc.gui.theme import ERROR_BOX, WARN_BOX
+from vedcalc.gui.theme import ERROR_BOX, WARN_BOX, set_tone
 from vedcalc.gui.widgets import DecimalEdit, EnumCombo, mark_error
 from vedcalc.modules.wb_unit.api import Fetch, TokenStore, http_fetch
 from vedcalc.modules.wb_unit.api_gui import WbApiBox
@@ -41,7 +41,6 @@ from vedcalc.modules.wb_unit.calc import (
     load_tariffs,
     solve,
 )
-from vedcalc.reports.style import NEGATIVE, POSITIVE, TEXT_MUTED
 
 RECALC_DELAY_MS = 150
 DEFAULT_TAX = {TaxMode.INCOME: Decimal(6), TaxMode.INCOME_MINUS_EXPENSES: Decimal(15)}
@@ -548,7 +547,7 @@ class WbTab(QWidget):
                 errors = str(exc).split("; ")
         if errors:
             self.result = None
-            self.status.setStyleSheet(ERROR_BOX)
+            set_tone(self.status, ERROR_BOX)
             self.status.setText("<b>Проверьте ввод:</b><br>" + "<br>".join(map(escape, errors)))
             self.status.show()
             self.result_box.hide()
@@ -564,7 +563,7 @@ class WbTab(QWidget):
             self.retail_edit.blockSignals(False)
         self.status.setVisible(bool(r.warnings))
         if r.warnings:
-            self.status.setStyleSheet(WARN_BOX)
+            set_tone(self.status, WARN_BOX)
             self.status.setText("<br>".join(map(escape, r.warnings)))
         self.result_box.show()
         self.title.setText(f"{r.inp.name} · {r.inp.scheme.label} · {fmt_number(r.liters)} л")
@@ -573,7 +572,7 @@ class WbTab(QWidget):
         self.payout_value.setText(fmt_money(r.payout))
         self.payout_sub.setText(f"расходы WB {fmt_money(r.wb_expenses)}")
         self.profit_value.setText(fmt_money(r.profit))
-        self.profit_value.setStyleSheet(f"color:{POSITIVE if r.profit > 0 else NEGATIVE};")
+        set_tone(self.profit_value, "pos" if r.profit > 0 else "neg")
         self.profit_sub.setText(f"маржа {fmt_pct(r.margin)} · ROI {fmt_pct(r.roi)}")
 
         grid = self.lines_grid
@@ -590,9 +589,9 @@ class WbTab(QWidget):
             value = _label(line.text, muted, right=True, bold=line.strong)
             value.setObjectName(f"wb:{line.label}")
             if line.informational:
-                value.setStyleSheet(f"color:{TEXT_MUTED};")
+                set_tone(value, "muted")
             if line.label == "Чистая прибыль":
-                value.setStyleSheet(f"color:{POSITIVE if line.value > 0 else NEGATIVE};")
+                set_tone(value, "pos" if line.value > 0 else "neg")
             grid.addWidget(label, n, 0)
             grid.addWidget(formula, n, 1)
             grid.addWidget(value, n, 2)

@@ -25,10 +25,9 @@ from vedcalc.core.models import PriceMode
 from vedcalc.core.report import CostReport, PriceReport
 from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
 from vedcalc.core.validation import Issue
-from vedcalc.gui.theme import ERROR_BOX, INFO_BOX, WARN_BOX
+from vedcalc.gui.theme import ERROR_BOX, INFO_BOX, WARN_BOX, current, notifier, set_tone
 from vedcalc.gui.widgets import DecimalEdit, EnumCombo, SectionView, mark_error
 from vedcalc.reports.html import load_warning, render_cost_html, render_price_html
-from vedcalc.reports.style import NEGATIVE, POSITIVE, TEXT_MUTED
 
 RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
@@ -118,9 +117,9 @@ class _UnitCard(QFrame):
             value = _label(line.text, muted, right=True, bold=line.strong)
             value.setObjectName(f"unit:{line.label}")
             if line.informational:
-                value.setStyleSheet(f"color:{TEXT_MUTED};")
+                set_tone(value, "muted")
             if line.label == "Чистая прибыль" and line.value:
-                value.setStyleSheet(f"color:{POSITIVE if line.value > 0 else NEGATIVE};")
+                set_tone(value, "pos" if line.value > 0 else "neg")
             tip = line.formula + (f"\n{line.hint}" if line.hint else "")
             label.setToolTip(tip)
             value.setToolTip(tip)
@@ -216,7 +215,7 @@ class LoadCard(QFrame):
         if warning := load_warning(report):
             msg = _label(warning)
             msg.setWordWrap(True)
-            msg.setStyleSheet(f"color:{NEGATIVE}; font-weight:600;")
+            set_tone(msg, "negStrong")
             msg.setObjectName("loadWarning")
             v.addWidget(msg)
         if load.packed:
@@ -286,6 +285,8 @@ class _ResultsBase(QTabWidget):
         self.addTab(scroll, "Результаты")
         self.details = QTextBrowser()
         self.details.setOpenExternalLinks(True)
+        self._render_details = None
+        notifier().changed.connect(self._set_details)
         self.addTab(self.details, "Детализация")
 
         self.cards_host = QWidget()
@@ -297,7 +298,7 @@ class _ResultsBase(QTabWidget):
         if not html:
             self.status.hide()
             return
-        self.status.setStyleSheet(style)
+        set_tone(self.status, style)
         self.status.setText(html)
         self.status.show()
 
@@ -336,9 +337,14 @@ class _ResultsBase(QTabWidget):
         for card in cards:
             self.cards_layout.addWidget(card)
 
-    def _set_details(self, html: str) -> None:
+    def _set_details(self, render=None) -> None:
+        """render(palette) → HTML детализации; без аргумента — перерисовать (смена темы)."""
+        if render is not None:
+            self._render_details = render
+        if self._render_details is None:
+            return
         scroll = self.details.verticalScrollBar().value()
-        self.details.setHtml(html)
+        self.details.setHtml(self._render_details(current()))
         self.details.verticalScrollBar().setValue(scroll)
 
 
@@ -376,7 +382,8 @@ class CostResultsPanel(_ResultsBase):
         self.unit_cards = [CostUnitCard(v, report.vat_payer) for v in report.unit_views()]
         self._replace_cards(self.unit_cards)
         self.batch_view.set_rows(report.batch_section().rows)
-        self._set_details(render_cost_html(report, font_family=self.font().family()))
+        font = self.font().family()
+        self._set_details(lambda pal: render_cost_html(report, font_family=font, palette=pal))
 
 
 class PriceResultsPanel(_ResultsBase):
@@ -402,7 +409,7 @@ class PriceResultsPanel(_ResultsBase):
         self.target_summary.setWordWrap(True)
         tb.addWidget(self.target_summary)
         self.target_error = _label("")
-        self.target_error.setStyleSheet(f"color:{NEGATIVE};")
+        set_tone(self.target_error, "neg")
         self.target_error.setWordWrap(True)
         self.target_error.hide()
         tb.addWidget(self.target_error)
@@ -488,4 +495,5 @@ class PriceResultsPanel(_ResultsBase):
         fin_rows = report.financing_rows()
         self.financing_view.set_rows(fin_rows)
         self.financing_view.setVisible(bool(fin_rows))
-        self._set_details(render_price_html(report, font_family=self.font().family()))
+        font = self.font().family()
+        self._set_details(lambda pal: render_price_html(report, font_family=font, palette=pal))

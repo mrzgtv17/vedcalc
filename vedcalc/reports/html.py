@@ -15,52 +15,37 @@ from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
 from vedcalc.core.report import CostReport, PriceReport, Row
 from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
 from vedcalc.core.whatif import WhatIf
-from vedcalc.reports.style import (
-    ACCENT,
-    ACCENT_HOVER,
-    ACCENT_SOFT,
-    BORDER,
-    CODE_BG,
-    MONO_FONTS,
-    NEGATIVE,
-    POSITIVE,
-    SURFACE_ALT,
-    TEXT,
-    TEXT_MUTED,
-    UI_FONTS,
-    WARN,
-    WARN_SOFT,
-)
+from vedcalc.reports.style import LIGHT, MONO_FONTS, UI_FONTS, Palette
 
 
-def _style(font_family: str | None) -> str:
+def _style(font_family: str | None, pal: Palette) -> str:
     fonts = f"'{font_family}', {UI_FONTS}" if font_family else UI_FONTS
     return f"""
-body {{ font-family: {fonts}; font-size: 10.5pt; color: {TEXT}; }}
+body {{ font-family: {fonts}; font-size: 10.5pt; color: {pal.text}; }}
 h1 {{ font-size: 17pt; font-weight: 600; margin: 0 0 2px 0; }}
 h2 {{ font-size: 13pt; font-weight: 600; margin: 22px 0 6px 0; }}
-h3 {{ font-size: 10.5pt; font-weight: 600; margin: 14px 0 4px 0; color: {TEXT}; }}
+h3 {{ font-size: 10.5pt; font-weight: 600; margin: 14px 0 4px 0; color: {pal.text}; }}
 p {{ margin: 0 0 6px 0; }}
-.muted {{ color: {TEXT_MUTED}; }}
+.muted {{ color: {pal.text_muted}; }}
 .small {{ font-size: 9pt; }}
-.chip {{ background-color: {ACCENT_SOFT}; color: {ACCENT_HOVER}; font-size: 9pt;
+.chip {{ background-color: {pal.accent_soft}; color: {pal.accent_hover}; font-size: 9pt;
          font-weight: 600; }}
-.code {{ font-family: {MONO_FONTS}; font-size: 9pt; background-color: {CODE_BG}; }}
-.warn {{ background-color: {WARN_SOFT}; color: {WARN}; }}
+.code {{ font-family: {MONO_FONTS}; font-size: 9pt; background-color: {pal.code_bg}; }}
+.warn {{ background-color: {pal.warn_soft}; color: {pal.warn}; }}
 td {{ vertical-align: top; }}
 td.num {{ text-align: right; white-space: nowrap; }}
 td.text {{ text-align: right; }}
-td.metric {{ background-color: {SURFACE_ALT}; }}
-.metric-caption {{ color: {TEXT_MUTED}; font-size: 9pt; }}
+td.metric {{ background-color: {pal.surface_alt}; }}
+.metric-caption {{ color: {pal.text_muted}; font-size: 9pt; }}
 .metric-value {{ font-size: 15pt; font-weight: 600; }}
-.metric-accent {{ color: {ACCENT}; }}
-tr.strong td {{ font-weight: 600; background-color: {SURFACE_ALT}; }}
-tr.info td {{ color: {TEXT_MUTED}; }}
-th {{ text-align: right; color: {TEXT_MUTED}; font-weight: 500; font-size: 9pt; }}
+.metric-accent {{ color: {pal.accent}; }}
+tr.strong td {{ font-weight: 600; background-color: {pal.surface_alt}; }}
+tr.info td {{ color: {pal.text_muted}; }}
+th {{ text-align: right; color: {pal.text_muted}; font-weight: 500; font-size: 9pt; }}
 th.left {{ text-align: left; }}
-.pos {{ color: {POSITIVE}; }}
-.neg {{ color: {NEGATIVE}; }}
-.rule {{ background-color: {BORDER}; }}
+.pos {{ color: {pal.positive}; }}
+.neg {{ color: {pal.negative}; }}
+.rule {{ background-color: {pal.border}; }}
 """
 
 
@@ -144,10 +129,11 @@ def _steps(groups, intro: str = "") -> str:
     return "".join(out)
 
 
-def _page(title: str, subtitle: str, body: list[str], font_family: str | None) -> str:
+def _page(title: str, subtitle: str, body: list[str], font_family: str | None, pal: Palette) -> str:
     return "".join(
         [
-            f"<html><head><meta charset='utf-8'><style>{_style(font_family)}</style></head><body>",
+            "<html><head><meta charset='utf-8'>",
+            f"<style>{_style(font_family, pal)}</style></head><body>",
             f"<h1>{escape(title)}</h1>",
             f'<p class="muted">{escape(subtitle)}</p>',
             *body,
@@ -202,7 +188,11 @@ def load_warning(report: CostReport) -> str | None:
 
 
 def render_cost_html(
-    report: CostReport, *, details: bool = True, font_family: str | None = None
+    report: CostReport,
+    *,
+    details: bool = True,
+    font_family: str | None = None,
+    palette: Palette = LIGHT,
 ) -> str:
     s = report.shipment
     warnings = list(report.cost.warnings)
@@ -238,7 +228,7 @@ def render_cost_html(
         f"Себестоимость импорта · дата расчёта {s.calc_date:%d.%m.%Y} · "
         f"{s.delivery_mode.label} · {report.cost.tax_regime.label}"
     )
-    return _page(s.name, subtitle, body, font_family)
+    return _page(s.name, subtitle, body, font_family, palette)
 
 
 # --- цена продажи -------------------------------------------------------------------------
@@ -327,6 +317,7 @@ def render_price_html(
     details: bool = True,
     font_family: str | None = None,
     whatif: WhatIf | None = None,
+    palette: Palette = LIGHT,
 ) -> str:
     body: list[str] = []
     if report.target is None:
@@ -342,4 +333,4 @@ def render_price_html(
         body += ["<h2>Расчёт по партии</h2>", _steps(report.step_groups())]
     body += ["<h2>Методика</h2>", _rows_table(report.method_rows())]
     subtitle = f"Цена продажи · {report.target_title} · {report.basis.source_label}"
-    return _page(report.title, subtitle, body, font_family)
+    return _page(report.title, subtitle, body, font_family, palette)
