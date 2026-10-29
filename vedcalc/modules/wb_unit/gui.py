@@ -7,6 +7,7 @@ from html import escape
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -14,8 +15,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +28,7 @@ from vedcalc.gui.theme import ERROR_BOX, WARN_BOX
 from vedcalc.gui.widgets import DecimalEdit, EnumCombo, mark_error
 from vedcalc.modules.wb_unit.api import Fetch, TokenStore, http_fetch
 from vedcalc.modules.wb_unit.api_gui import WbApiBox
+from vedcalc.modules.wb_unit.batch_gui import BatchPanel
 from vedcalc.modules.wb_unit.calc import (
     Scheme,
     Target,
@@ -169,13 +173,37 @@ class WbTab(QWidget):
         right.setFrameShape(QFrame.Shape.NoFrame)
         right.setWidget(page)
 
+        # Справа — один товар или список товаров из файла (общие параметры — в форме)
+        self.batch = BatchPanel()
+        self.batch.changed.connect(self._on_batch_changed)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(right)
+        self.pages.addWidget(self.batch)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(right)
+        splitter.addWidget(self.pages)
         splitter.setSizes([560, 760])
-        layout = QHBoxLayout(self)
+        modes = QHBoxLayout()
+        self.mode_group = QButtonGroup(self)
+        self.mode_buttons: dict[str, QPushButton] = {}
+        for n, (key, title) in enumerate((("single", "Один товар"), ("list", "Список товаров"))):
+            button = QPushButton(title)
+            button.setCheckable(True)
+            button.setObjectName("segment")
+            button.setMinimumWidth(button.sizeHint().width() + 28)  # жирный текст шире
+            self.mode_group.addButton(button, n)
+            self.mode_buttons[key] = button
+            modes.addWidget(button)
+        self.mode_buttons["single"].setChecked(True)
+        self.mode_group.idClicked.connect(self._on_mode)
+        hint = _label("В режиме списка общие параметры — схема, налог, тарифы — берутся из "
+                      "формы слева.", "caption")  # fmt: skip
+        modes.addWidget(hint, 1)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(splitter)
+        layout.addLayout(modes)
+        layout.addWidget(splitter, 1)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -415,6 +443,12 @@ class WbTab(QWidget):
             "scheme": self.scheme_combo.value().value,
             "tax_mode": self.tax_combo.value().value,
             "fields": {key: edit.text() for key, edit in self._fields.items()},
+            "mode": self.mode,
+            "batch": {
+                "file": self.batch.file_name,
+                "table": self.batch.table_data,
+                "low_margin": self.batch.low_margin.text(),
+            },
             "wb_subject": self.api_box.selected_subject_title(),
             "wb_warehouse": self.api_box.selected_warehouse_name(),
         }
@@ -425,8 +459,20 @@ class WbTab(QWidget):
         try:
             self.set_input(WbInput())
             self.api_box.set_selection("", "")
+            self.batch.clear()
+            self.set_mode("single")
             if not state:
                 return
+            batch = state.get("batch") or {}
+            table = batch.get("table") or []
+            if isinstance(table, list):
+                self.batch.set_data(
+                    str(batch.get("file") or ""), [list(map(str, r)) for r in table]
+                )
+            self.batch.low_margin.blockSignals(True)
+            self.batch.low_margin.setText(str(batch.get("low_margin") or "10"))
+            self.batch.low_margin.blockSignals(False)
+            self.set_mode(str(state.get("mode") or "single"))
             self.api_box.set_selection(
                 str(state.get("wb_subject") or ""), str(state.get("wb_warehouse") or "")
             )
@@ -461,9 +507,38 @@ class WbTab(QWidget):
     def _on_tax_mode(self) -> None:
         self._fields["tax_rate_pct"].set_value(DEFAULT_TAX[self.tax_combo.value()])
 
+    @property
+    def mode(self) -> str:
+        return "list" if self.mode_buttons["list"].isChecked() else "single"
+
+    def set_mode(self, mode: str) -> None:
+        self.mode_buttons["list" if mode == "list" else "single"].setChecked(True)
+        self.pages.setCurrentIndex(1 if mode == "list" else 0)
+
+    def _on_mode(self, index: int) -> None:
+        self.pages.setCurrentIndex(index)
+        self._changed()
+
+    def _on_batch_changed(self) -> None:
+        self._changed()
+
+    def subject_lookup(self, name: str):
+        """Комиссии из тарифов WB по API: по названию предмета или «предмет (категория)»."""
+        key = name.strip().lower()
+        for s in self.api_box.data.subjects:
+            if key in (s.name.lower(), s.title.lower()):
+                return s.fbo_pct, s.fbs_pct
+        return None
+
+    def _recalc_batch(self, inp: WbInput | None, errors: list[str]) -> None:
+        if self.mode == "list":
+            self.batch.update(inp, self.tariffs, self.subject_lookup, errors)
+
     def recalc(self) -> WbResult | None:
         self._timer.stop()
         inp, errors = self.read_input()
+        if self.mode == "list":
+            self._recalc_batch(inp, errors)
         if inp is not None:
             self.liters_label.setText(f"{fmt_number(liters_of(inp))} л")
             try:
