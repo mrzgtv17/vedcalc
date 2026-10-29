@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ from vedcalc.core.models import (
     PricingSource,
     SaleParams,
     Shipment,
+    Snapshot,
     TaxRegime,
     TierPricing,
 )
@@ -294,16 +295,47 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc
 
 
-def project_to_dict(shipment: Shipment, modules: dict[str, dict] | None = None) -> dict:
-    """Файл проекта: расчёт импорта и цены + состояние вкладок-модулей («Контейнер», «WB»).
+def project_to_dict(
+    shipment: Shipment,
+    modules: dict[str, dict] | None = None,
+    snapshots: list[Snapshot] | None = None,
+) -> dict:
+    """Файл проекта: расчёт импорта и цены + состояние вкладок-модулей («Контейнер», «WB»)
+    + запомненные варианты для сравнения.
 
-    Модули лежат в необязательном ключе "modules" — старые версии программы его не читают
-    и открывают такой файл как обычный расчёт.
+    Модули и варианты лежат в необязательных ключах "modules" и "snapshots" — старые версии
+    программы их не читают и открывают такой файл как обычный расчёт.
     """
     data = shipment_to_dict(shipment)
     if modules:
         data["modules"] = modules
+    if snapshots:
+        data["snapshots"] = [
+            {
+                "name": s.name,
+                "created": s.created.isoformat(timespec="seconds"),
+                "shipment": shipment_to_dict(s.shipment)["shipment"],
+            }
+            for s in snapshots
+        ]
     return data
+
+
+def snapshots_from_dict(data: dict[str, Any]) -> list[Snapshot]:
+    """Варианты из файла проекта; повреждённый вариант — FileFormatError."""
+    raw = data.get("snapshots") or []
+    if not isinstance(raw, list):
+        raise FileFormatError("Файл расчёта повреждён: раздел snapshots")
+    out = []
+    for item in raw:
+        try:
+            shipment = shipment_from_dict({**data, "shipment": item["shipment"]})
+            out.append(
+                Snapshot(str(item["name"]), shipment, datetime.fromisoformat(item["created"]))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FileFormatError(f"Файл расчёта повреждён: вариант {exc}") from exc
+    return out
 
 
 def project_from_dict(data: dict[str, Any]) -> tuple[Shipment, dict[str, dict]]:
@@ -330,8 +362,13 @@ def read_json(path: Path) -> dict:
     return data
 
 
-def save_project(shipment: Shipment, modules: dict[str, dict] | None, path: Path) -> None:
-    write_json(project_to_dict(shipment, modules), path)
+def save_project(
+    shipment: Shipment,
+    modules: dict[str, dict] | None,
+    path: Path,
+    snapshots: list[Snapshot] | None = None,
+) -> None:
+    write_json(project_to_dict(shipment, modules, snapshots), path)
 
 
 def load_project(path: Path) -> tuple[Shipment, dict[str, dict]]:

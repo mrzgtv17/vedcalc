@@ -251,3 +251,48 @@ def write_price_xlsx(
 
 def _section(section) -> tuple[str, tuple[Row, ...]]:
     return section.title, section.rows
+
+
+def write_compare_xlsx(comparison, path: Path) -> None:
+    """Сравнение вариантов: статьи по строкам, варианты и разница к первому — по колонкам."""
+    from vedcalc.core.compare import Kind
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Сравнение"
+    names = comparison.names
+    r = _header(ws, "Сравнение вариантов", " · ".join(names), ())
+    heads = ["Статья", *names] + [f"{n} − {names[0]}" for n in names[1:]]
+    for c, h in enumerate(heads, 1):
+        cell = ws.cell(r, c, h)
+        cell.font = BOLD
+        cell.fill = HEADER_FILL
+    r += 1
+    section = None
+    for row in comparison.rows:
+        if row.section != section:
+            section = row.section
+            ws.cell(r, 1, section).font = SECTION
+            r += 1
+        values = list(row.values) + [row.delta(k) for k in range(1, len(names))]
+        label = row.label + (", %" if row.kind is Kind.PCT else "")
+        ws.cell(r, 1, label).font = BOLD if row.strong else Font()
+        for c, value in enumerate(values, 2):
+            if row.kind is Kind.PCT and value is not None:
+                value = round(value * 100, 2)
+            cell = ws.cell(r, c, value)
+            cell.number_format = "0.00" if row.kind is Kind.PCT else MONEY
+            if row.kind is Kind.NUMBER:
+                cell.number_format = "General"
+            if row.strong:
+                cell.font = BOLD
+        r += 1
+    r += 1
+    for name, error in comparison.errors:
+        ws.cell(r, 1, f"{name}: {error}")
+        r += 1
+    for note in comparison.notes:
+        ws.cell(r, 1, note)
+        r += 1
+    _widths(ws, 44, *([18] * (len(heads) - 1)))
+    wb.save(path)
