@@ -114,6 +114,7 @@ class PricingTab(QWidget):
         self._timer.setInterval(RECALC_DELAY_MS)
         self._timer.timeout.connect(self.recalc)
         self.results.targetChanged.connect(self._on_changed)
+        self.results.tier_view.modified.connect(self._on_tiers_changed)
         import_tab.reportChanged.connect(self._on_import_changed)
         import_tab.form.regimeChanged.connect(self._on_import_regime_changed)
 
@@ -257,6 +258,7 @@ class PricingTab(QWidget):
             self.profit_tax.set_value(sale.profit_tax_rate)
             self.price_dependent.set_value(sale.price_dependent_rate)
             self.results.set_target(sale.target_mode, sale.target_value)
+            self.results.tier_view.set_params(state.tiers)
             self.fin_mode.set_value(fin.mode)
             self.fin_rate.set_value(fin.annual_rate)
             self.fin_share.set_value(fin.borrowed_share)
@@ -337,7 +339,8 @@ class PricingTab(QWidget):
         self._mark(issues)
         if issues:
             return None, issues
-        return PricingState(sale, fin, source, manual), []
+        tiers = copy.deepcopy(self.results.tier_view.params)
+        return PricingState(sale, fin, source, manual, tiers), []
 
     def _mark(self, issues: list[Issue]) -> None:
         bad = {i.path: i.message for i in issues}
@@ -408,6 +411,13 @@ class PricingTab(QWidget):
         if self.source_combo.value() is PricingSource.IMPORT:
             self._timer.start()
 
+    def _on_tiers_changed(self) -> None:
+        """Пороги прайса не меняют цену — только сохраняются вместе с расчётом."""
+        if self._loading:
+            return
+        self.import_tab.form.pricing.tiers = copy.deepcopy(self.results.tier_view.params)
+        self.modified.emit()
+
     def _on_changed(self, *_args) -> None:
         if self._loading:
             return
@@ -459,5 +469,6 @@ class PricingTab(QWidget):
             title = state.manual_cost.name
         self.report = build_price_report(basis, state.financing, title, cost_report)
         self.results.show_report(self.report)
+        self.results.tier_view.set_report(self.report)
         self.results.whatif_view.set_report(self.report, self.import_tab.fee_scale)
         return self.report

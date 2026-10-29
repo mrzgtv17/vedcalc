@@ -23,10 +23,12 @@ from vedcalc.core.models import (
     ManualCost,
     Packaging,
     PriceMode,
+    PriceTier,
     PricingSource,
     SaleParams,
     Shipment,
     TaxRegime,
+    TierPricing,
 )
 from vedcalc.core.money import Money
 from vedcalc.core.units import Unit
@@ -94,6 +96,29 @@ def _manual_from_dict(d: dict | None) -> ManualCost:
         unit_cost_net=Decimal(d.get("unit_cost_net", "0")),
         unit_deductible_vat=Decimal(d.get("unit_deductible_vat", "0")),
         tax_regime=TaxRegime(d.get("tax_regime", TaxRegime.OSN)),
+    )
+
+
+def _tiers_to_dict(t: TierPricing) -> dict:
+    return {
+        "tiers": [
+            {"min_qty": str(x.min_qty), "discount_pct": str(x.discount_pct)} for x in t.tiers
+        ],
+        "order_cost": str(t.order_cost),
+        "item": t.item,
+    }
+
+
+def _tiers_from_dict(d: dict | None) -> TierPricing:
+    if not d:
+        return TierPricing()
+    return TierPricing(
+        tiers=[
+            PriceTier(Decimal(x["min_qty"]), Decimal(x.get("discount_pct", "0")))
+            for x in d.get("tiers", [])
+        ],
+        order_cost=Decimal(d.get("order_cost", "0")),
+        item=int(d.get("item", 0)),
     )
 
 
@@ -187,6 +212,7 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                 "unit_deductible_vat": str(s.manual_cost.unit_deductible_vat),
                 "tax_regime": s.manual_cost.tax_regime.value,
             },
+            "tier_pricing": _tiers_to_dict(s.tier_pricing),
         },
     }
 
@@ -262,6 +288,7 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
             financing=_financing_from_dict(s.get("financing")),
             pricing_source=PricingSource(s.get("pricing_source", PricingSource.IMPORT)),
             manual_cost=_manual_from_dict(s.get("manual_cost")),
+            tier_pricing=_tiers_from_dict(s.get("tier_pricing")),
         )
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise FileFormatError(f"Файл расчёта повреждён: {exc}") from exc

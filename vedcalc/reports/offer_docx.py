@@ -189,6 +189,25 @@ def write_offer_docx(offer: Offer, path: Path) -> None:
     name_mm = 64 if inp.show_tnved else 88
     _fixed(table, [9, name_mm] + ([24] if inp.show_tnved else []) + [18, 34, 28])
 
+    if offer.tiers:
+        doc.add_paragraph()
+        _text(doc.add_paragraph(), offer.tiers_title, bold=True)
+        tt = doc.add_table(rows=1, cols=3)
+        _borders(tt, show=mono)
+        for k, h in enumerate(("Объём заказа", "Скидка", offer.price_header)):
+            cell = tt.rows[0].cells[k]
+            _text(cell, h, bold=True, color=p.head_text, size=9,
+                  align=WD_ALIGN_PARAGRAPH.RIGHT if k else None)  # fmt: skip
+            if not mono:
+                _shade(cell, p.head_bg)
+        for n, t in enumerate(offer.tiers, 1):
+            cells = tt.add_row().cells
+            for k, value in enumerate((t.label, t.discount, fmt_money(t.unit_price))):
+                _text(cells[k], value, align=WD_ALIGN_PARAGRAPH.RIGHT if k else None)
+                if n % 2 == 0 and not mono:
+                    _shade(cells[k], p.zebra)
+        _fixed(tt, [50, 30, 44])
+
     terms = offer.terms()
     if terms:
         doc.add_paragraph()

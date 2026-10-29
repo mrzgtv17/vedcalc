@@ -44,6 +44,7 @@ from vedcalc.core.models import (
     SaleParams,
     Shipment,
     TaxRegime,
+    TierPricing,
     default_cost_lines,
 )
 from vedcalc.core.money import ZERO, Money
@@ -569,6 +570,7 @@ class ShipmentForm(QWidget):
             financing=copy.deepcopy(self.pricing.financing),
             pricing_source=self.pricing.source,
             manual_cost=copy.deepcopy(self.pricing.manual_cost),
+            tier_pricing=copy.deepcopy(self.pricing.tiers),
         ), []
 
     # --- подсветка ошибок ---------------------------------------------------------
@@ -622,6 +624,7 @@ class PricingState:
     financing: Financing = field(default_factory=Financing)
     source: PricingSource = PricingSource.IMPORT
     manual_cost: ManualCost = field(default_factory=ManualCost)
+    tiers: TierPricing = field(default_factory=TierPricing)
 
     @classmethod
     def from_shipment(cls, s: Shipment) -> PricingState:
@@ -630,6 +633,7 @@ class PricingState:
             copy.deepcopy(s.financing),
             s.pricing_source,
             copy.deepcopy(s.manual_cost),
+            copy.deepcopy(s.tier_pricing),
         )
 
 

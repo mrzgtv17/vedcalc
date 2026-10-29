@@ -418,10 +418,18 @@ class PriceResultsPanel(_ResultsBase):
 
         self.batch_view = SectionView("Итого по партии")
         self.financing_view = SectionView("Стоимость денег")
+        from vedcalc.gui.tiers import TierView
         from vedcalc.gui.whatif import WhatIfView
 
+        self.tier_view = TierView()
         self.whatif_view = WhatIfView()
-        for w in (self.cards_host, self.batch_view, self.financing_view, self.whatif_view):
+        for w in (
+            self.cards_host,
+            self.tier_view,
+            self.batch_view,
+            self.financing_view,
+            self.whatif_view,
+        ):
             self.page_layout.addWidget(w)
             self.result_widgets.append(w)
         self.page_layout.addStretch(1)

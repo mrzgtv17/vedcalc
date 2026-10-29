@@ -20,9 +20,10 @@ from enum import StrEnum
 from pathlib import Path
 
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_rate
-from vedcalc.core.models import Financing, FinancingMode
+from vedcalc.core.models import Financing, FinancingMode, TierPricing
 from vedcalc.core.money import HUNDRED, ZERO, round_money
 from vedcalc.core.report import PriceReport
+from vedcalc.core.tiers import tier_label, tier_table
 
 
 class OfferStyle(StrEnum):
@@ -150,6 +151,7 @@ class OfferInput:
     validity_days: int = 10
     comment: str = ""
     show_tnved: bool = False
+    show_tiers: bool = False  # таблица «Цены по объёму заказа»
     style: OfferStyle = OfferStyle.NEUTRAL
     use_logo: bool = True
     use_signature: bool = False
@@ -172,12 +174,27 @@ class OfferLine:
 
 
 @dataclass(frozen=True, slots=True)
+class OfferTier:
+    """Строка «Цены по объёму»: только то, что видит клиент — объём, скидка, цена."""
+
+    label: str  # «от 50 шт»
+    discount: str  # «3%» или «—»
+    unit_price: Decimal  # с НДС (при УСН — без НДС)
+
+
+@dataclass(frozen=True, slots=True)
 class Offer:
     inp: OfferInput
     requisites: Requisites
     lines: tuple[OfferLine, ...]
     vat_payer: bool
     vat_rate: Decimal
+    tiers: tuple[OfferTier, ...] = ()
+    tiers_item: str = ""
+
+    @property
+    def tiers_title(self) -> str:
+        return f"Цена в зависимости от объёма заказа: {self.tiers_item}"
 
     @property
     def total(self) -> Decimal:
@@ -255,8 +272,10 @@ def build_offer(
     inp: OfferInput,
     req: Requisites,
     tnved_codes: list[str | None] | None = None,
+    tier_pricing: TierPricing | None = None,
 ) -> Offer:
-    """КП из расчёта цены. tnved_codes — коды позиций (из расчёта импорта), если есть."""
+    """КП из расчёта цены. tnved_codes — коды позиций (из расчёта импорта), если есть;
+    tier_pricing — пороги ступенчатого прайса (в КП — при inp.show_tiers)."""
     if report.target is None:
         raise ValueError(report.target_error or "Цена не рассчитана")
     vat_payer = report.vat_payer
@@ -272,4 +291,18 @@ def build_offer(
                 view.name, code or "", view.quantity, view.unit_label, unit_price, amount, vat
             )
         )
-    return Offer(inp, req, tuple(lines), vat_payer, rate)
+    tiers: tuple[OfferTier, ...] = ()
+    tiers_item = ""
+    if inp.show_tiers and tier_pricing is not None:
+        table = tier_table(report, tier_pricing)
+        if table is not None:
+            tiers_item = table.item_name
+            tiers = tuple(
+                OfferTier(
+                    tier_label(r, table.unit_label),
+                    f"{fmt_number(r.discount_pct)}%" if r.discount_pct else "—",
+                    r.price_gross if vat_payer else r.price_net,
+                )
+                for r in table.rows
+            )
+    return Offer(inp, req, tuple(lines), vat_payer, rate, tiers, tiers_item)

@@ -13,6 +13,7 @@ from html import escape
 from vedcalc import __version__
 from vedcalc.core.explain import fmt_money, fmt_number, fmt_pct
 from vedcalc.core.report import CostReport, PriceReport, Row
+from vedcalc.core.tiers import TierTable, tier_label
 from vedcalc.core.unit_economics import UnitCostView, UnitLine, UnitPriceView
 from vedcalc.core.whatif import WhatIf
 from vedcalc.reports.style import LIGHT, MONO_FONTS, UI_FONTS, Palette
@@ -278,6 +279,37 @@ def _periods_table(report: PriceReport) -> str:
     return "".join(out)
 
 
+NUM = ' class="num"'
+
+
+def _tiers_section(t: TierTable) -> list[str]:
+    heads = ["Заказ", "Скидка", "Цена без НДС"] + (["Цена с НДС"] if t.vat_payer else [])
+    heads += ["Прибыль на ед.", "Маржа"]
+    out = [
+        f"<h2>Ступенчатый прайс: {escape(t.item_name)}</h2>",
+        f'<p class="muted">Базовая цена — по сценарию: {fmt_money(t.base_price_net)} ₽ без НДС '
+        f"за 1 {escape(t.unit_label)}.</p>",
+        '<table width="100%" cellspacing="0" cellpadding="4"><tr>',
+    ]
+    out += [f'<td class="{"num " if c else ""}muted small">{h}</td>' for c, h in enumerate(heads)]
+    out.append("</tr>")
+    for row in t.rows:
+        cells = [escape(tier_label(row, t.unit_label)), fmt_pct(row.discount_pct / 100, 1),
+                 fmt_money(row.price_net)]  # fmt: skip
+        if t.vat_payer:
+            cells.append(fmt_money(row.price_gross))
+        sign = "neg" if row.loss else "pos"
+        cells += [f'<span class="{sign}">{fmt_money(row.net_profit)}</span>', fmt_pct(row.margin)]
+        out.append(
+            "<tr>"
+            + "".join(f"<td{NUM if c else ''}>{v}</td>" for c, v in enumerate(cells))
+            + "</tr>"
+        )
+    out.append("</table>")
+    out += [f'<p class="muted small">{escape(n)}</p>' for n in t.notes]
+    return out
+
+
 def _whatif_section(whatif: WhatIf) -> list[str]:
     body = [
         "<h2>Что если</h2>",
@@ -318,6 +350,7 @@ def render_price_html(
     font_family: str | None = None,
     whatif: WhatIf | None = None,
     palette: Palette = LIGHT,
+    tiers: TierTable | None = None,
 ) -> str:
     body: list[str] = []
     if report.target is None:
@@ -327,6 +360,8 @@ def render_price_html(
     body += [f"<h2>{escape(batch.title)}</h2>", _rows_table(batch.rows)]
     if fin_rows := report.financing_rows():
         body += ["<h2>Стоимость денег</h2>", _rows_table(fin_rows), _periods_table(report)]
+    if tiers is not None:
+        body += _tiers_section(tiers)
     if whatif is not None and whatif.tables:
         body += _whatif_section(whatif)
     if details and report.step_groups():
