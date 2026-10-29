@@ -212,10 +212,11 @@ QLabel[tone="warn"] {{
 QLabel[tone="info"] {{
     background: {pal.info_soft}; color: {pal.text}; border-radius: 10px; padding: 10px 12px;
 }}
-*[tone="fieldError"] {{
+QLineEdit[tone="fieldError"], QComboBox[tone="fieldError"], QDateEdit[tone="fieldError"],
+QSpinBox[tone="fieldError"] {{
     border: 1px solid {pal.negative}; background: {pal.danger_soft}; border-radius: 7px;
 }}
-*[tone="warnBorder"] {{ border: 1px solid {pal.warn}; }}
+QLineEdit[tone="warnBorder"] {{ border: 1px solid {pal.warn}; }}
 QLabel[tone="pos"] {{ color: {pal.positive}; }}
 QLabel[tone="neg"] {{ color: {pal.negative}; }}
 QLabel[tone="negStrong"] {{ color: {pal.negative}; font-weight: 600; }}
@@ -252,7 +253,9 @@ def apply_theme(app: QApplication, mode: str | None = None) -> None:
     font = QFont(app.font())
     font.setPointSize(BASE_POINT_SIZE)
     app.setFont(font)
-    app.setStyleSheet(_qss(pal))
+    qss = _qss(pal)
+    if app.styleSheet() != qss:  # повторная установка перерисовывает все виджеты — дорого
+        app.setStyleSheet(qss)
     if not _state["hooked"]:
         _state["hooked"] = True
         app.styleHints().colorSchemeChanged.connect(lambda *_: _on_system_change(app))
