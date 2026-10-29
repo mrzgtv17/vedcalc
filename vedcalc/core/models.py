@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from enum import StrEnum
 
 from vedcalc.core.money import RUB, ZERO, Money
@@ -148,6 +148,30 @@ class CostKind(StrEnum):
 
 
 @dataclass(slots=True)
+class Packaging:
+    """Грузовое место позиции: размеры и вес брутто одного места, сколько в нём товара."""
+
+    length_cm: Decimal
+    width_cm: Decimal
+    height_cm: Decimal
+    gross_kg: Decimal  # вес брутто одного места
+    units_per_place: Decimal  # товара в одном месте — в единицах позиции (шт, кг, т)
+    can_tip: bool = False  # можно класть на бок
+    stackable: bool = True  # можно ставить друг на друга
+    max_layers: int | None = None
+
+    def places(self, quantity: Decimal) -> int:
+        """Число мест: количество / в месте, с округлением вверх."""
+        if self.units_per_place <= 0:
+            return 0
+        return int((quantity / self.units_per_place).to_integral_value(rounding=ROUND_CEILING))
+
+    @property
+    def place_volume_m3(self) -> Decimal:
+        return self.length_cm * self.width_cm * self.height_cm / Decimal(1_000_000)
+
+
+@dataclass(slots=True)
 class Item:
     name: str
     unit_price: Money
@@ -162,6 +186,7 @@ class Item:
     volume_m3: Decimal | None = None
     # Количество в единице специфической ставки (л, пары, м², см³), если она не кг/т/шт
     duty_quantity: Decimal | None = None
+    packaging: Packaging | None = None
 
 
 @dataclass(slots=True)

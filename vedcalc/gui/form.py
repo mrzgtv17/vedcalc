@@ -51,6 +51,7 @@ from vedcalc.core.settings import load_settings
 from vedcalc.core.tnved import TnvedEntry
 from vedcalc.core.units import Unit
 from vedcalc.core.validation import Issue
+from vedcalc.gui.packaging import PackagingButton
 from vedcalc.gui.tnved import TnvedEdit
 from vedcalc.gui.widgets import (
     CenteredCheck,
@@ -211,6 +212,12 @@ class ShipmentForm(QWidget):
         Column(
             "volume", "Объём, м³", 80, "Объём всей позиции — для подсказки о загрузке контейнера"
         ),
+        Column(
+            "pack",
+            "Упаковка",
+            100,
+            "Грузовое место: размеры, вес и сколько товара в месте — для укладки в контейнер",
+        ),
     ]
     COST_COLUMNS: ClassVar[list[Column]] = [
         Column("name", "Расход", 240),
@@ -250,7 +257,7 @@ class ShipmentForm(QWidget):
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         self.date_edit.setToolTip("Дата расчёта — на неё берутся курсы ЦБ РФ")
         self.delivery_combo = EnumCombo([(m, m.label) for m in DeliveryMode])
-        self.delivery_combo.setToolTip("Справочно; в будущем — для калькулятора загрузки")
+        self.delivery_combo.setToolTip("Для контейнеров — загрузка и укладка грузовых мест")
         self.regime_combo = EnumCombo([(r, r.label) for r in TaxRegime])
         self.allocation_combo = EnumCombo([(a, a.label.capitalize()) for a in AllocationMethod])
         form.addRow("Название / номер расчёта", self.name_edit)
@@ -350,6 +357,7 @@ class ShipmentForm(QWidget):
         vat.set_value(item.vat_rate)
         tnved = TnvedEdit(item.tnved_code or "")
         duty_qty = DecimalEdit(item.duty_quantity, optional=True)
+        pack = PackagingButton(item.packaging)
         self.items_table.append(
             {
                 "name": name,
@@ -365,6 +373,7 @@ class ShipmentForm(QWidget):
                 "gross": DecimalEdit(item.gross_weight_kg, optional=True),
                 "net": DecimalEdit(item.net_weight_kg, optional=True),
                 "volume": DecimalEdit(item.volume_m3, optional=True),
+                "pack": pack,
                 # Ставка из ЕТТ (или из файла расчёта) — со специфической частью и источником
                 "meta": {"duty": item.duty if item.duty.source or item.duty.has_specific else None},
             }
@@ -372,7 +381,18 @@ class ShipmentForm(QWidget):
         row = self.items_table.rows[-1]
         tnved.entryChanged.connect(lambda entry, r=row: self._apply_tnved(r, entry))
         unit.currentIndexChanged.connect(lambda _=None, r=row: self._apply_duty_ui(r))
+        pack.changed.connect(self.items_table.changed.emit)
+        for w in (row["quantity"], unit):
+            _connect(w, lambda r=row: self._update_pack(r))
         self._apply_duty_ui(row)
+        self._update_pack(row)
+
+    def _update_pack(self, row: dict) -> None:
+        try:
+            qty = row["quantity"].value()
+        except ValueError:
+            qty = None
+        row["pack"].set_context(qty, row["unit"].value())
 
     def _apply_tnved(self, row: dict, entry: TnvedEntry | None) -> None:
         """Код введён: подставить ставку ЕТТ (ручные правки затираются только новым кодом)."""
@@ -498,6 +518,7 @@ class ShipmentForm(QWidget):
                     net_weight_kg=net,
                     duty_quantity=duty_qty if row["duty_qty"].isEnabled() else None,
                     volume_m3=volume,
+                    packaging=row["pack"].packaging,
                 )
             )
 

@@ -87,6 +87,7 @@ class CalculatorTab(QWidget):
 
     modified = Signal()
     reportChanged = Signal()
+    showPacking = Signal()  # открыть грузовые места партии во вкладке «Контейнер»
 
     def __init__(
         self,
@@ -105,6 +106,7 @@ class CalculatorTab(QWidget):
 
         self.form = ShipmentForm()
         self.results = CostResultsPanel()
+        self.results.showPacking.connect(self.showPacking)
 
         left = QScrollArea()
         left.setWidgetResizable(True)
@@ -202,7 +204,8 @@ class CalculatorTab(QWidget):
         try:
             rates = resolve_rates(shipment.currencies(), on, self.rates, shipment.manual_rates)
             cost = calculate(shipment, rates, self.fee_scale)
-            report = build_cost_report(shipment, cost, estimate_load(shipment))
+            load = estimate_load(shipment)
+            report = build_cost_report(shipment, cost, load)
         except InputError as exc:
             self.form.mark_issues(exc.issues if self.touched else [])
             self._set_report(None)

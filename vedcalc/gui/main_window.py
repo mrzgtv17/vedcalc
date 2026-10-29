@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from importlib import resources
 from pathlib import Path
 
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self.calculator = CalculatorTab(provider, threaded=threaded)
         self.calculator.modified.connect(self._mark_dirty)
         self.calculator.reportChanged.connect(self._update_actions)
+        self.calculator.showPacking.connect(self.show_packing)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -408,6 +410,31 @@ class MainWindow(QMainWindow):
                 self._error(f"Не удалось сохранить файл:\n{exc}")
                 return
             self.statusBar().showMessage(f"XLSX сохранён: {path}", 4000)
+
+    def show_packing(self) -> None:
+        """Грузовые места партии — во вкладку «Контейнер» (ввод вкладки заменяется)."""
+        from vedcalc.core.containers import cargo_kinds
+        from vedcalc.core.explain import fmt_number
+
+        tab = self.module_tabs.get("container")
+        report = self.calculator.report
+        if tab is None or report is None:
+            return
+        kinds = cargo_kinds(report.shipment) or []
+        cm = lambda mm: fmt_number(Decimal(mm) / 10)  # noqa: E731
+        state = {
+            "container": report.shipment.delivery_mode.value,
+            "kinds": [
+                {"name": k.name, "length": cm(k.length_mm), "width": cm(k.width_mm),
+                 "height": cm(k.height_mm), "weight": fmt_number(k.weight_kg),
+                 "quantity": str(k.quantity), "layers": str(k.max_layers or ""),
+                 "tip": k.can_tip, "stack": k.stackable}
+                for k in kinds
+            ],
+        }  # fmt: skip
+        tab.load_state(state)
+        self._mark_dirty()
+        self.tabs.setCurrentWidget(tab)
 
     def _base_name(self) -> str:
         return self.path.name.removesuffix(".json").removesuffix(".vedcalc") if self.path else ""

@@ -21,6 +21,7 @@ from vedcalc.core.models import (
     FinancingMode,
     Item,
     ManualCost,
+    Packaging,
     PriceMode,
     PricingSource,
     SaleParams,
@@ -96,6 +97,30 @@ def _manual_from_dict(d: dict | None) -> ManualCost:
     )
 
 
+_PACK_DECIMALS = ("length_cm", "width_cm", "height_cm", "gross_kg", "units_per_place")
+
+
+def _packaging_to_dict(pk: Packaging | None) -> dict | None:
+    if pk is None:
+        return None
+    return {k: str(getattr(pk, k)) for k in _PACK_DECIMALS} | {
+        "can_tip": pk.can_tip,
+        "stackable": pk.stackable,
+        "max_layers": pk.max_layers,
+    }
+
+
+def _packaging_from_dict(d: dict | None) -> Packaging | None:
+    if not d:
+        return None
+    return Packaging(
+        *(Decimal(d[k]) for k in _PACK_DECIMALS),
+        can_tip=bool(d.get("can_tip", False)),
+        stackable=bool(d.get("stackable", True)),
+        max_layers=int(d["max_layers"]) if d.get("max_layers") else None,
+    )
+
+
 def shipment_to_dict(s: Shipment) -> dict[str, Any]:
     return {
         "format": FORMAT,
@@ -129,6 +154,7 @@ def shipment_to_dict(s: Shipment) -> dict[str, Any]:
                     "net_weight_kg": _opt(i.net_weight_kg),
                     "volume_m3": _opt(i.volume_m3),
                     "duty_quantity": _opt(i.duty_quantity),
+                    "packaging": _packaging_to_dict(i.packaging),
                 }
                 for i in s.items
             ],
@@ -202,6 +228,7 @@ def shipment_from_dict(data: dict[str, Any]) -> Shipment:
                     net_weight_kg=_dec_opt(i.get("net_weight_kg")),
                     volume_m3=_dec_opt(i.get("volume_m3")),
                     duty_quantity=_dec_opt(i.get("duty_quantity")),
+                    packaging=_packaging_from_dict(i.get("packaging")),
                 )
             )
         costs = [
