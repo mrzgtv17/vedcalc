@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from vedcalc.core.containers import ContainerSpec, load_containers
 from vedcalc.core.explain import fmt_money, fmt_pct
 from vedcalc.gui.form import Column, RowTable
-from vedcalc.gui.theme import ERROR_BOX, WARN_BOX
+from vedcalc.gui.theme import ERROR_BOX, WARN_BOX, current, set_tone
 from vedcalc.gui.widgets import CenteredCheck, DecimalEdit, EnumCombo, mark_error
 from vedcalc.modules.container_calc.packing import (
     MAX_KINDS,
@@ -37,7 +37,6 @@ from vedcalc.modules.container_calc.packing import (
     compare,
     pack,
 )
-from vedcalc.reports.style import BORDER_STRONG, NEGATIVE, SURFACE_ALT, TEXT_MUTED
 
 RECALC_DELAY_MS = 250
 # Мягкие цвета видов мест (до 20; повторяются по кругу)
@@ -98,16 +97,16 @@ class LoadDrawing(QWidget):
         font = QFont(self.font())
         font.setPointSize(10)
         p.setFont(font)
-        p.setPen(QColor(TEXT_MUTED))
+        pal = current()
+        p.setPen(QColor(pal.text_muted))
         p.drawText(QRectF(1, 0, w, 16), "Вид сверху (двери справа)")
         top = QRectF(1, 18, w, top_h)
         p.drawText(QRectF(1, 18 + top_h + 6, w, 16), "Вид сбоку")
-        p.setPen(QColor(TEXT_MUTED))
         side = QRectF(1, 18 + top_h + gap, w, side_h)
         self.setMinimumHeight(int(side.bottom()) + 4)
         for frame in (top, side):
-            p.setPen(QPen(QColor(BORDER_STRONG), 1))
-            p.setBrush(QColor(SURFACE_ALT))
+            p.setPen(QPen(QColor(pal.border_strong), 1))
+            p.setBrush(QColor(pal.surface_alt))
             p.drawRect(frame)
         # Ниже лежащие блоки рисуем первыми — сверху видно верхние
         for b in sorted(self.loaded.blocks, key=lambda b: (b.z_mm, b.y_mm)):
@@ -428,7 +427,7 @@ class ContainerTab(QWidget):
     def _show_status(self, html: str | None, style: str = WARN_BOX) -> None:
         self.status.setVisible(bool(html))
         if html:
-            self.status.setStyleSheet(style)
+            set_tone(self.status, style)
             self.status.setText(html)
 
     def _replace_cards(self, cards: list[QWidget]) -> None:
@@ -508,9 +507,9 @@ class ContainerTab(QWidget):
                     font.setBold(True)
                     lbl.setFont(font)
                 if r.spec.code == self.spec().code:
-                    lbl.setStyleSheet(f"background:{SURFACE_ALT}; padding:2px 4px;")
+                    set_tone(lbl, "cell")
                 elif not r.complete:
-                    lbl.setStyleSheet(f"color:{NEGATIVE};")
+                    set_tone(lbl, "neg")
                 grid.addWidget(lbl, n, c)
         self.compare_box.show()
 

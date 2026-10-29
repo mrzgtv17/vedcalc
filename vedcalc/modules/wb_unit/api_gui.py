@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vedcalc.gui.theme import current
 from vedcalc.modules.wb_unit.api import (
     Fetch,
     TokenStore,
@@ -191,7 +192,7 @@ class WbApiBox(QGroupBox):
         if self.busy:
             text = "Загружаю тарифы и комиссии WB…"
         elif error:
-            text = f"<span style='color:#B3261E'>{escape(error)}</span>"
+            text = f"<span style='color:{current().negative}'>{escape(error)}</span>"
         elif self.data.fetched_at:
             text = (
                 f"Данные WB от {self.data.fetched_at:%d.%m.%Y %H:%M}: "

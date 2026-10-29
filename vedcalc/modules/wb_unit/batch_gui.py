@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from vedcalc.core.explain import fmt_money
-from vedcalc.gui.theme import ERROR_BOX, INFO_BOX
+from vedcalc.gui.theme import ERROR_BOX, INFO_BOX, current, notifier, set_tone
 from vedcalc.gui.widgets import DecimalEdit, mark_error
 from vedcalc.modules.wb_unit.batch import (
     DEFAULT_LOW_MARGIN,
@@ -40,10 +40,8 @@ from vedcalc.modules.wb_unit.batch import (
     write_template,
 )
 from vedcalc.modules.wb_unit.calc import Scheme, Tariffs, WbInput
-from vedcalc.reports.style import NEGATIVE, POSITIVE
 
 FILE_FILTER = "Таблицы (*.xlsx *.xlsm *.csv)"
-LEVEL_COLORS = {"loss": "#F8D7D3", "low": "#FFF1C7", "error": "#EEEEEE"}
 # Короткие заголовки для экрана (в Excel — полные)
 SCREEN_HEADERS = ("№", "Название", "До скидки", "Цена", "Комиссия", "К перечислению",
                   "Прибыль", "Маржа", "ROI", "Прибыль {other}", "Ошибка")  # fmt: skip
@@ -109,6 +107,7 @@ class BatchPanel(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSortingEnabled(True)
+        notifier().changed.connect(self._fill)  # подсветка строк — из текущей темы
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)  # «Ошибка» забирает остаток ширины
         for col, width in enumerate((40, 230, 88, 84, 76, 112, 84, 68, 68, 100, 160)):
@@ -189,13 +188,15 @@ class BatchPanel(QWidget):
         )
 
     def _message(self, html: str, *, error: bool = False) -> None:
-        self.info.setStyleSheet(ERROR_BOX if error else INFO_BOX)
+        set_tone(self.info, ERROR_BOX if error else INFO_BOX)
         self.info.setText(html)
 
     def _fill(self) -> None:
         if not self.results:
             return
         low = self.threshold()
+        pal = current()
+        level_colors = {"loss": pal.row_loss, "low": pal.row_low, "error": pal.surface_alt}
         other = "FBS" if self.scheme is Scheme.FBO else "FBO"
         self.table.setHorizontalHeaderLabels([h.format(other=other) for h in SCREEN_HEADERS])
         self.table.setSortingEnabled(False)
@@ -204,10 +205,10 @@ class BatchPanel(QWidget):
             lvl = level(res, low)
             for c, value in enumerate(result_values(res)):
                 item = self._cell(c, value)
-                if lvl in LEVEL_COLORS:
-                    item.setBackground(QColor(LEVEL_COLORS[lvl]))
+                if lvl in level_colors:
+                    item.setBackground(QColor(level_colors[lvl]))
                 if c in (6, 9) and isinstance(value, Decimal):
-                    item.setForeground(QColor(POSITIVE if value >= 0 else NEGATIVE))
+                    item.setForeground(QColor(pal.positive if value >= 0 else pal.negative))
                 if c == 10 and value:
                     item.setToolTip(str(value))
                 self.table.setItem(r, c, item)
@@ -216,7 +217,7 @@ class BatchPanel(QWidget):
         parts = [
             f"<b>{escape(self.file_name or 'Список')}</b>: товаров {s.total}, рассчитано "
             f"{s.computed}",
-            f"<span style='color:{NEGATIVE}'>убыточных {s.losses}</span>",
+            f"<span style='color:{pal.negative}'>убыточных {s.losses}</span>",
             f"маржа ниже {low.normalize():f}% — {s.low_margin}",
         ]
         if s.errors:

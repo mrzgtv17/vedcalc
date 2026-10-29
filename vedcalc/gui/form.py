@@ -52,6 +52,7 @@ from vedcalc.core.tnved import TnvedEntry
 from vedcalc.core.units import Unit
 from vedcalc.core.validation import Issue
 from vedcalc.gui.packaging import PackagingButton
+from vedcalc.gui.theme import set_tone
 from vedcalc.gui.tnved import TnvedEdit
 from vedcalc.gui.widgets import (
     CenteredCheck,
@@ -61,7 +62,6 @@ from vedcalc.gui.widgets import (
     VatCombo,
     mark_error,
 )
-from vedcalc.reports.style import WARN
 
 COST_PRESETS: list[tuple[str, CostKind, bool, Decimal]] = [
     # (название, вид, включается в ТС, ставка НДС по умолчанию)
@@ -308,7 +308,7 @@ class ShipmentForm(QWidget):
         hint = QLabel(
             "Доставка по РФ в рамках международной перевозки — НДС 0% (пп. 2.1 п. 1 ст. 164 НК РФ)"
         )
-        hint.setStyleSheet("color: #6e6e73;")
+        set_tone(hint, "muted")
         hint.setWordWrap(True)
         buttons.addWidget(add)
         buttons.addWidget(hint, 1)
@@ -416,7 +416,7 @@ class ShipmentForm(QWidget):
         needs_qty = specific and _needs_duty_quantity(rate, row["unit"].value())
         qty_edit.setEnabled(needs_qty)
         qty_edit.setPlaceholderText(rate.specific_unit.label if needs_qty else "")
-        tnved.setStyleSheet(f"border:1px solid {WARN};" if tnved.unknown else "")
+        set_tone(tnved, "warnBorder" if tnved.unknown else None)
 
     def add_cost(self, line: CostLine) -> None:
         name = QLineEdit(line.name)

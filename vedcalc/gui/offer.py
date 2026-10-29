@@ -42,6 +42,7 @@ from vedcalc.core.offer import (
 )
 from vedcalc.core.report import PriceReport
 from vedcalc.gui.prefs import app_settings
+from vedcalc.gui.theme import set_tone
 from vedcalc.gui.widgets import EnumCombo
 
 IMAGE_FILTER = "Изображения (*.png *.jpg *.jpeg)"
@@ -200,6 +201,7 @@ class OfferDialog(QDialog):
 
         self.preview = QTextBrowser()
         self.preview.setOpenLinks(False)
+        set_tone(self.preview, "paper")  # КП — как на бумаге, в любой теме
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(scroll)
         splitter.addWidget(self.preview)

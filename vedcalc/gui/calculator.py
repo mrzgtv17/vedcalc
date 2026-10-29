@@ -18,6 +18,7 @@ from vedcalc.core.report import CostReport, build_cost_report
 from vedcalc.core.validation import InputError
 from vedcalc.gui.form import ShipmentForm, new_shipment
 from vedcalc.gui.results import CostResultsPanel
+from vedcalc.gui.theme import current
 
 RECALC_DELAY_MS = 150
 
@@ -234,7 +235,7 @@ class CalculatorTab(QWidget):
         if rate_set is None:
             if on in self.rates.errors:
                 self.form.set_rates_info(
-                    "<span style='color:#d70015'>Курсы ЦБ РФ недоступны."
+                    f"<span style='color:{current().negative}'>Курсы ЦБ РФ недоступны."
                     "</span> Задайте курс вручную."
                 )
             else:
@@ -249,5 +250,5 @@ class CalculatorTab(QWidget):
                 parts.append(f"<b>{code}</b> {r.value:.4f}{per}".replace(".", ","))
         text = f"{rate_set.source}, курс на {rate_set.rate_date:%d.%m.%Y}: " + " · ".join(parts)
         if rate_set.warning:
-            text += f"<br><span style='color:#9c4a00'>⚠ {escape(rate_set.warning)}</span>"
+            text += f"<br><span style='color:{current().warn}'>⚠ {escape(rate_set.warning)}</span>"
         self.form.set_rates_info(text)
