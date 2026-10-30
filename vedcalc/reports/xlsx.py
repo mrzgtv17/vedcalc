@@ -11,6 +11,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from vedcalc.core.explain import fmt_money
 from vedcalc.core.report import CostReport, PriceReport, Row
+from vedcalc.core.tiers import TierTable, tier_label
 from vedcalc.core.whatif import WhatIf
 
 MONEY = "#,##0.00"
@@ -172,8 +173,44 @@ def _whatif_sheet(wb: Workbook, report: PriceReport, whatif: WhatIf) -> None:
     _widths(ws, 22, 24, 20, 12, 16)
 
 
-def write_price_xlsx(report: PriceReport, path: Path, whatif: WhatIf | None = None) -> None:
-    """Цена продажи: «За единицу», «Итоги» (+ стоимость денег), «Что если», «Детализация»."""
+def _tiers_sheet(wb: Workbook, report: PriceReport, t: TierTable) -> None:
+    ws = wb.create_sheet("Прайс по объёму")
+    subtitle = (
+        f"Ступенчатый прайс: {t.item_name}. Базовая цена — по сценарию: "
+        f"{fmt_money(t.base_price_net)} ₽ без НДС за 1 {t.unit_label}."
+    )
+    r = _header(ws, report.title, subtitle, ())
+    heads = ["Заказ", "Скидка, %", "Цена без НДС"] + (["Цена с НДС"] if t.vat_payer else [])
+    heads += ["Расходы на заказ на ед.", "Прибыль на ед.", "Маржа, %"]
+    for c, h in enumerate(heads, 1):
+        ws.cell(r, c, h).font = BOLD
+    r += 1
+    for row in t.rows:
+        values = [tier_label(row, t.unit_label), row.discount_pct, row.price_net]
+        if t.vat_payer:
+            values.append(row.price_gross)
+        margin = None if row.margin is None else round(row.margin * 100, 2)
+        values += [row.order_cost, row.net_profit, margin]
+        for c, value in enumerate(values, 1):
+            cell = ws.cell(r, c, value)
+            if isinstance(value, Decimal) and c > 2:
+                cell.number_format = "#,##0.00"
+        r += 1
+    r += 1
+    for note in t.notes:
+        ws.cell(r, 1, note)
+        r += 1
+    _widths(ws, 18, 12, 16, 16, 20, 16, 12)
+
+
+def write_price_xlsx(
+    report: PriceReport,
+    path: Path,
+    whatif: WhatIf | None = None,
+    tiers: TierTable | None = None,
+) -> None:
+    """Цена продажи: «За единицу», «Итоги» (+ стоимость денег), «Прайс по объёму»,
+    «Что если», «Детализация»."""
     wb = Workbook()
     subtitle = f"Цена продажи · {report.target_title} · {report.basis.source_label}"
     warnings = [report.target_error] if report.target is None and report.target_error else []
@@ -204,6 +241,8 @@ def write_price_xlsx(report: PriceReport, path: Path, whatif: WhatIf | None = No
     _write_rows(ws, r, "Методика", report.method_rows())
     _widths(ws, 42, 30, 60, 18)
 
+    if tiers is not None:
+        _tiers_sheet(wb, report, tiers)
     if whatif is not None and whatif.tables:
         _whatif_sheet(wb, report, whatif)
     _steps_sheet(wb, report.step_groups())

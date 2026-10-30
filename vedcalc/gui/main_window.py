@@ -399,12 +399,18 @@ class MainWindow(QMainWindow):
             return self.pricing.results.whatif_view.whatif
         return None
 
+    def _tiers(self):
+        """Ступенчатый прайс с экрана — только для отчёта о цене."""
+        if self.current_report() is self.pricing.report:
+            return self.pricing.results.tier_view.table
+        return None
+
     def export_pdf(self, path: Path | None = None) -> None:
         from vedcalc.gui.export_pdf import write_pdf
 
         path = path or self._export_path("pdf", "Экспорт в PDF", "PDF (*.pdf)")
         if path:
-            write_pdf(self.current_report(), path, self._whatif())
+            write_pdf(self.current_report(), path, self._whatif(), self._tiers())
             self.statusBar().showMessage(f"PDF сохранён: {path}", 4000)
 
     def export_xlsx(self, path: Path | None = None) -> None:
@@ -415,7 +421,7 @@ class MainWindow(QMainWindow):
             try:
                 report = self.current_report()
                 if report is self.pricing.report:
-                    write_price_xlsx(report, path, self._whatif())
+                    write_price_xlsx(report, path, self._whatif(), self._tiers())
                 else:
                     write_cost_xlsx(report, path)
             except OSError as exc:
@@ -457,7 +463,12 @@ class MainWindow(QMainWindow):
         if not self.pricing.offer_ready:
             self._error("Цена продажи не рассчитана — заполните вкладку «Цена продажи».")
             return
-        OfferDialog(self.pricing.report, base_name=self._base_name(), parent=self).exec()
+        OfferDialog(
+            self.pricing.report,
+            base_name=self._base_name(),
+            tier_pricing=self.calculator.form.pricing.tiers,
+            parent=self,
+        ).exec()
 
     def edit_requisites(self) -> None:
         from vedcalc.gui.offer import RequisitesDialog

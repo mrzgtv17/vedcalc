@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vedcalc.core.models import TierPricing
 from vedcalc.core.offer import (
     Offer,
     OfferInput,
@@ -172,10 +173,12 @@ class OfferDialog(QDialog):
         base_name: str = "",
         directory: Path | None = None,
         settings: QSettings | None = None,
+        tier_pricing: TierPricing | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Коммерческое предложение")
+        self.tier_pricing = tier_pricing
         self.resize(1240, 820)
         self.report = report
         self.base_name = base_name or report.title
@@ -311,16 +314,26 @@ class OfferDialog(QDialog):
         self.use_stamp = QCheckBox("Печать")
         self.show_tnved = QCheckBox("Колонка «Код ТН ВЭД»")
         self.show_tnved.setEnabled(bool(self.tnved_codes and any(self.tnved_codes)))
+        self.show_tiers = QCheckBox("Цены по объёму заказа")
+        self.show_tiers.setToolTip("Ступенчатый прайс с вкладки «Цена продажи»: от N единиц")
+        self.show_tiers.setEnabled(bool(self.tier_pricing and self.tier_pricing.tiers))
         for key, box_ in (
             ("use_logo", self.use_logo),
             ("use_signature", self.use_signature),
             ("use_stamp", self.use_stamp),
             ("show_tnved", self.show_tnved),
+            ("show_tiers", self.show_tiers),
         ):
             default = key == "use_logo"
             box_.setChecked(self.settings.value(f"offer/{key}", default, type=bool))  # fmt: skip
         checks = QVBoxLayout()
-        for w in (self.use_logo, self.use_signature, self.use_stamp, self.show_tnved):
+        for w in (
+            self.use_logo,
+            self.use_signature,
+            self.use_stamp,
+            self.show_tnved,
+            self.show_tiers,
+        ):
             checks.addWidget(w)
         form.addRow("Показать", checks)
         self.images_hint = QLabel()
@@ -360,6 +373,7 @@ class OfferDialog(QDialog):
             validity_days=self.validity.value(),
             comment=self.comment.toPlainText().strip(),
             show_tnved=self.show_tnved.isChecked() and self.show_tnved.isEnabled(),
+            show_tiers=self.show_tiers.isChecked() and self.show_tiers.isEnabled(),
             style=self.style_combo.value(),
             use_logo=self.use_logo.isChecked() and self.use_logo.isEnabled(),
             use_signature=self.use_signature.isChecked() and self.use_signature.isEnabled(),
@@ -374,7 +388,7 @@ class OfferDialog(QDialog):
         self._timer.stop()
         self._apply_requisites_ui()
         self.offer = build_offer(self.report, self.offer_input(), self.requisites,
-                                 self.tnved_codes)  # fmt: skip
+                                 self.tnved_codes, self.tier_pricing)  # fmt: skip
         bar = self.preview.verticalScrollBar()
         pos = bar.value()
         self.preview.setHtml(render_offer_html(self.offer))
@@ -391,7 +405,7 @@ class OfferDialog(QDialog):
         self.settings.setValue("offer/style", inp.style.value)
         self.settings.setValue("offer/delivery_terms", inp.delivery_terms)
         self.settings.setValue("offer/validity_days", inp.validity_days)
-        for key in ("use_logo", "use_signature", "use_stamp", "show_tnved"):
+        for key in ("use_logo", "use_signature", "use_stamp", "show_tnved", "show_tiers"):
             self.settings.setValue(f"offer/{key}", getattr(self, key).isChecked())
 
     def save(self, kind: str, path: Path | None = None) -> Path | None:

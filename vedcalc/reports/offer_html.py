@@ -68,6 +68,9 @@ def _img(path, width: int) -> str:
     return f'<img src="{path.as_uri()}" width="{width}">' if path else ""
 
 
+ZEBRA = ' class="zebra"'
+
+
 def render_offer_html(offer: Offer) -> str:
     inp, req = offer.inp, offer.requisites
     p = PALETTES[inp.style]
@@ -134,6 +137,21 @@ def render_offer_html(offer: Offer) -> str:
         )
     rows.append("</table>")
 
+    tiers_html = ""
+    if offer.tiers:
+        body = "".join(
+            f"<tr{ZEBRA if n % 2 == 0 else ''}><td>{escape(t.label)}</td>"
+            f'<td class="num">{escape(t.discount)}</td>'
+            f'<td class="num">{fmt_money(t.unit_price)}</td></tr>'
+            for n, t in enumerate(offer.tiers, 1)
+        )
+        tiers_html = (
+            f"<p></p><p><b>{escape(offer.tiers_title)}</b></p>"
+            '<table class="items" width="70%" cellspacing="0" cellpadding="6"><tr>'
+            '<th width="40%">Объём заказа</th><th class=num>Скидка</th>'
+            f"<th class=num>{escape(offer.price_header)}</th></tr>{body}</table>"
+        )
+
     terms = offer.terms()
     terms_html = ""
     if terms:
@@ -173,6 +191,7 @@ def render_offer_html(offer: Offer) -> str:
         + header
         + title
         + "".join(rows)
+        + tiers_html
         + terms_html
         + comment
         + signature

@@ -306,6 +306,31 @@ class ManualCost:
 
 
 @dataclass(slots=True)
+class PriceTier:
+    """Порог прайса: от min_qty единиц — скидка discount_pct % от базовой цены."""
+
+    min_qty: Decimal
+    discount_pct: Decimal = ZERO
+
+
+def default_tiers() -> list[PriceTier]:
+    return [
+        PriceTier(Decimal(10), ZERO),
+        PriceTier(Decimal(50), Decimal(3)),
+        PriceTier(Decimal(100), Decimal(5)),
+    ]
+
+
+@dataclass(slots=True)
+class TierPricing:
+    """Ступенчатый прайс: цена за единицу при разном объёме заказа покупателя."""
+
+    tiers: list[PriceTier] = field(default_factory=default_tiers)
+    order_cost: Decimal = ZERO  # расходы на один заказ покупателя, руб. без НДС
+    item: int = 0  # номер позиции партии
+
+
+@dataclass(slots=True)
 class Shipment:
     name: str = "Новый расчёт"
     calc_date: date = field(default_factory=date.today)
@@ -320,6 +345,7 @@ class Shipment:
     financing: Financing = field(default_factory=Financing)
     pricing_source: PricingSource = PricingSource.IMPORT
     manual_cost: ManualCost = field(default_factory=ManualCost)
+    tier_pricing: TierPricing = field(default_factory=TierPricing)
 
     def currencies(self) -> set[str]:
         found = {i.unit_price.currency for i in self.items}
