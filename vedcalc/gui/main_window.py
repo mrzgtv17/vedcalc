@@ -15,13 +15,14 @@ from vedcalc.core.fx import RateProvider
 from vedcalc.core.io import (
     FileFormatError,
     duplicate_shipment,
-    load_project,
     project_from_dict,
     project_to_dict,
     read_json,
     save_project,
+    snapshots_from_dict,
     write_json,
 )
+from vedcalc.core.models import Snapshot
 from vedcalc.core.offer import requisites_dir
 from vedcalc.core.validation import InputError
 from vedcalc.gui.calculator import CalculatorTab
@@ -55,6 +56,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         apply_theme(QApplication.instance())
         self.path: Path | None = None
+        self.snapshots: list[Snapshot] = []  # запомненные варианты для сравнения
         self.dirty = False
         self.updates = UpdateController(self, threaded=threaded)
 
@@ -120,6 +122,11 @@ class MainWindow(QMainWindow):
         m.addAction(self._action("Сохранить как…", self.save_as, QKeySequence.StandardKey.SaveAs))
         m.addAction(self._action("Дублировать расчёт", self.duplicate, "Ctrl+D"))
         m.addSeparator()
+        m.addAction(
+            self._action("Запомнить вариант…", lambda: self.remember_variant(), "Ctrl+Shift+M")
+        )
+        m.addAction(self._action("Сравнить варианты…", self.compare_variants, "Ctrl+Shift+K"))
+        m.addSeparator()
         self.pdf_action = self._action("Экспорт в PDF…", self.export_pdf, "Ctrl+E")
         self.xlsx_action = self._action("Экспорт в XLSX…", self.export_xlsx, "Ctrl+Shift+E")
         m.addAction(self.pdf_action)
@@ -175,7 +182,14 @@ class MainWindow(QMainWindow):
             return self.calculator.report
         return None
 
-    def _load(self, shipment, path: Path | None, modules: dict[str, dict] | None = None) -> None:
+    def _load(
+        self,
+        shipment,
+        path: Path | None,
+        modules: dict[str, dict] | None = None,
+        snapshots: list[Snapshot] | None = None,
+    ) -> None:
+        self.snapshots = list(snapshots or [])
         self.calculator.set_shipment(shipment)
         self.pricing.set_state(PricingState.from_shipment(shipment))
         for module_id, tab in self.module_tabs.items():
@@ -221,12 +235,14 @@ class MainWindow(QMainWindow):
                 return
             path = Path(name)
         try:
-            shipment, states = load_project(path)
+            data = read_json(path)
+            shipment, states = project_from_dict(data)
+            snapshots = snapshots_from_dict(data)
         except (OSError, FileFormatError) as exc:
             self._error(f"Не удалось открыть файл:\n{exc}")
             self._forget_recent(path)
             return
-        self._load(shipment, path, states)
+        self._load(shipment, path, states, snapshots)
         self._remember_recent(path)
 
     def open_example(self) -> None:
@@ -267,7 +283,7 @@ class MainWindow(QMainWindow):
         if shipment is None:
             return False
         try:
-            save_project(shipment, self.module_states(), path)
+            save_project(shipment, self.module_states(), path, self.snapshots)
         except OSError as exc:
             self._error(f"Не удалось сохранить файл:\n{exc}")
             return False
@@ -283,10 +299,46 @@ class MainWindow(QMainWindow):
         shipment = self._current()
         if shipment is None or not self._confirm_discard():
             return
-        self._load(duplicate_shipment(shipment), None, self.module_states())
+        self._load(duplicate_shipment(shipment), None, self.module_states(), self.snapshots)
         self.dirty = True
         self._update_title()
         self.statusBar().showMessage("Создана копия расчёта — сохраните её под новым именем", 5000)
+
+    # --- варианты для сравнения ---------------------------------------------------------
+
+    def remember_variant(self, name: str | None = None) -> Snapshot | None:
+        """Снимок текущего расчёта (импорт и цена) — в список вариантов проекта."""
+        shipment = self._current()
+        if shipment is None:
+            return None
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+
+            default = f"Вариант {len(self.snapshots) + 1}"
+            name, ok = QInputDialog.getText(
+                self, "Запомнить вариант", "Название варианта (например, «Море»):", text=default
+            )
+            if not ok:
+                return None
+        snapshot = Snapshot(name.strip() or "Без названия", shipment)
+        self.snapshots.append(snapshot)
+        self._mark_dirty()
+        self.statusBar().showMessage(f"Вариант «{snapshot.name}» запомнен", 4000)
+        return snapshot
+
+    def open_variant(self, snapshot: Snapshot) -> None:
+        """Вариант — в редактор вместо текущего ввода (файл и варианты остаются)."""
+        import copy
+
+        modules, snapshots, path = self.module_states(), self.snapshots, self.path
+        self._load(copy.deepcopy(snapshot.shipment), path, modules, snapshots)
+        self.dirty = True
+        self._update_title()
+
+    def compare_variants(self) -> None:
+        from vedcalc.gui.compare import CompareDialog
+
+        CompareDialog(self, parent=self).exec()
 
     # --- последние файлы ----------------------------------------------------------------
 
@@ -334,7 +386,7 @@ class MainWindow(QMainWindow):
             shipment = self.calculator.shipment()
         except InputError:
             return False  # ввод с ошибками — оставляем прошлую копию
-        data = project_to_dict(shipment, self.module_states())
+        data = project_to_dict(shipment, self.module_states(), self.snapshots)
         data["recovery"] = {"path": str(self.path) if self.path else None}
         target = autosave_path()
         try:
@@ -355,6 +407,7 @@ class MainWindow(QMainWindow):
         try:
             data = read_json(target)
             shipment, states = project_from_dict(data)
+            snapshots = snapshots_from_dict(data)
         except (OSError, FileFormatError):
             self.discard_autosave()
             return False
@@ -370,7 +423,7 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             self.discard_autosave()
             return False
-        self._load(shipment, Path(original) if original else None, states)
+        self._load(shipment, Path(original) if original else None, states, snapshots)
         self.dirty = True
         self._update_title()
         self.autosave()  # копия нужна, пока восстановленное не сохранено

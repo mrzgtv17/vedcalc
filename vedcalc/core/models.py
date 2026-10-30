@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_CEILING, Decimal
 from enum import StrEnum
 
@@ -376,3 +376,12 @@ def default_cost_lines(currency: str = RUB) -> list[CostLine]:
             kind=CostKind.DELIVERY_RF,
         ),
     ]
+
+
+@dataclass(slots=True)
+class Snapshot:
+    """Запомненный вариант расчёта («Море», «Ж/д») — для сравнения рядом с другими."""
+
+    name: str
+    shipment: Shipment
+    created: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
