@@ -362,7 +362,7 @@ def write_swap_script(
         relaunch=relaunch if relaunch is not None else f"open {q(str(bundle))}",
     )
     fd, name = tempfile.mkstemp(prefix="vedcalc-update-", suffix=".sh", dir=directory)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(script)
     os.chmod(name, 0o700)
     return Path(name)

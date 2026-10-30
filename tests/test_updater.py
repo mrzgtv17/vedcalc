@@ -156,6 +156,7 @@ def make_app(path: Path, version: str, bundle_id: str = updater.BUNDLE_ID) -> Pa
     return path
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="скрипт подмены .app — только для macOS")
 def test_swap_script_replaces_bundle_after_process_exits(tmp_path):
     apps = tmp_path / "Applications"
     old = make_app(apps / "Калькулятор ВЭД.app", "0.2.0")
