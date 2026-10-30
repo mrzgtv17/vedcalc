@@ -57,3 +57,7 @@ jobs:
           name: windows-setup
           path: dist/*-setup.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4  # снимок окна: виден ли интерфейс как задумано
+        with:
+          name: windows-screenshot
+          path: ${{ runner.temp }}/vedcalc-install/smoke.png
