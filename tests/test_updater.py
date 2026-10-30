@@ -309,3 +309,43 @@ def test_attach_retries_temporary_failure(tmp_path):
 
     with pytest.raises(UpdateError, match="not recognized"):
         updater._attach(tmp_path / "a.dmg", tmp_path / "m", broken, lambda s: None)
+
+
+# --- Windows -----------------------------------------------------------------------------
+
+
+def test_windows_asset_name_and_release_lookup():
+    assert updater.asset_name("0.16.0", "x64") == "vedcalc-0.16.0-windows-x64-setup.exe"
+    assert updater.asset_name("0.16.0", "arm64") == "vedcalc-0.16.0-macos-arm64.dmg"
+    release = {
+        "tag_name": "v0.16.0",
+        "assets": [
+            {"name": "vedcalc-0.16.0-macos-arm64.dmg", "browser_download_url": "u1", "size": 1},
+            {
+                "name": "vedcalc-0.16.0-windows-x64-setup.exe",
+                "browser_download_url": "u2",
+                "size": 2,
+                "digest": f"sha256:{SHA}",
+            },
+        ],
+    }
+    win = updater.parse_release(release, "x64")
+    assert win.asset.url == "u2" and win.asset.sha256 == SHA
+    assert updater.parse_release(release, "arm64").asset.url == "u1"  # Mac выбирает своё
+
+
+def test_windows_arch(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert updater.machine_arch() == "x64"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/opt/vedcalc/vedcalc.exe")
+    assert updater.windows_install_dir().name == "vedcalc"
+    assert updater.current_app_bundle() is None
+
+
+def test_windows_install_command_waits_for_exit():
+    cmd = updater.windows_install_command(Path("C:/Temp/it's/setup.exe"), 4242)
+    assert cmd[0] == "powershell"
+    script = cmd[-1]
+    assert script.index("Wait-Process -Id 4242") < script.index("Start-Process")
+    assert "'/VERYSILENT'" in script and "it''s" in script
