@@ -5,7 +5,7 @@
   в суммах уже учтён; программа раскладывает их обратно на базовый тариф и коэффициент,
   чтобы обратная логистика (без коэффициента) считалась как раньше.
 
-Токен хранится в Связке ключей macOS (keyring), ответы — в кэше папки программы, чтобы
+Токен хранится в хранилище паролей системы (keyring), ответы — в кэше папки программы, чтобы
 программа работала и без интернета.
 """
 
@@ -275,7 +275,8 @@ def refresh(token: str, fetch: Fetch = http_fetch, today: date | None = None) ->
 
 
 class TokenStore:
-    """Токен в Связке ключей macOS. Без keyring или с VEDCALC_NO_KEYCHAIN (тесты) — в памяти."""
+    """Токен в хранилище паролей системы: Связка ключей macOS, Диспетчер учётных данных
+    Windows. Без keyring или с VEDCALC_NO_KEYCHAIN (тесты) — в памяти."""
 
     def __init__(self) -> None:
         self._memory: str | None = None
@@ -307,7 +308,7 @@ class TokenStore:
         try:
             kr.set_password(KEYRING_SERVICE, KEYRING_USER, token)
         except Exception as exc:
-            raise WbApiError(f"Не удалось сохранить токен в Связке ключей: {exc}") from None
+            raise WbApiError(f"Не удалось сохранить токен в хранилище паролей: {exc}") from None
 
     def delete(self) -> None:
         self._memory = None

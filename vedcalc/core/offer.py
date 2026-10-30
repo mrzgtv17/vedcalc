@@ -42,7 +42,7 @@ class OfferStyle(StrEnum):
 
 @dataclass(slots=True)
 class Requisites:
-    """Реквизиты продавца — хранятся на Mac, а не в файле расчёта."""
+    """Реквизиты продавца — хранятся на компьютере, а не в файле расчёта."""
 
     company: str = ""
     inn: str = ""
@@ -98,11 +98,13 @@ DATA_DIR_ENV = "VEDCALC_DATA_DIR"  # другая папка данных (те�
 
 
 def requisites_dir() -> Path:
-    """Папка данных программы на этом Mac: реквизиты, автосохранение."""
+    """Папка данных программы на этом компьютере: реквизиты, автосохранение."""
     if os.environ.get(DATA_DIR_ENV):
         return Path(os.environ[DATA_DIR_ENV])
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home()))
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "vedcalc"

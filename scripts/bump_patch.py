@@ -17,14 +17,14 @@ ROOT = Path(__file__).resolve().parent.parent
 def main() -> None:
     note = sys.argv[1]
     init = ROOT / "vedcalc" / "__init__.py"
-    old = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', init.read_text())
+    old = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', init.read_text("utf-8"))
     major, minor, patch = map(int, old.groups())
     new = f"{major}.{minor}.{patch + 1}"
     prev = f"{major}.{minor}.{patch}"
     for path in (init, ROOT / "pyproject.toml"):
-        path.write_text(path.read_text().replace(f'"{prev}"', f'"{new}"', 1))
+        path.write_text(path.read_text("utf-8").replace(f'"{prev}"', f'"{new}"', 1), "utf-8")
     changelog = ROOT / "CHANGELOG.md"
-    text = changelog.read_text()
+    text = changelog.read_text("utf-8")
     text = text.replace(
         "## [Не выпущено]\n",
         f"## [Не выпущено]\n\n## [{new}] — {date.today().isoformat()}\n\n### Изменено\n- {note}\n",
@@ -34,7 +34,7 @@ def main() -> None:
         f"[Не выпущено]: ../../compare/v{prev}...HEAD",
         f"[Не выпущено]: ../../compare/v{new}...HEAD\n[{new}]: ../../compare/v{prev}...v{new}",
     )
-    changelog.write_text(text)
+    changelog.write_text(text, "utf-8")
     print(new)
 
 
