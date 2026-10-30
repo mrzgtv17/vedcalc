@@ -1,8 +1,9 @@
 """Обновление приложения из GitHub Releases.
 
-Поток: проверить последний релиз → скачать .dmg для своей архитектуры → сверить SHA-256 →
-смонтировать образ и скопировать новое .app рядом с текущим → после выхода из программы
-вспомогательный скрипт подменяет бандл и запускает новую версию.
+Поток: проверить последний релиз → скачать сборку для своей системы → сверить SHA-256 →
+macOS: смонтировать образ и скопировать новое .app рядом с текущим, после выхода из программы
+вспомогательный скрипт подменяет бандл и запускает новую версию;
+Windows: после выхода из программы установщик тихо ставит новую версию и запускает её.
 
 Модуль не зависит от Qt. Сеть и запуск процессов передаются параметрами — для тестов.
 """
@@ -34,6 +35,7 @@ DOWNLOAD_URL = f"https://github.com/{REPO}/releases/download/{{tag}}/{{name}}"
 CHANGELOG_URL = f"https://raw.githubusercontent.com/{REPO}/{{tag}}/CHANGELOG.md"
 CHECKSUMS_ASSET = "SHA256SUMS.txt"
 BUNDLE_ID = "ru.vedcalc.app"
+WINDOWS_ARCH = "x64"
 CHUNK = 256 * 1024
 
 
@@ -54,7 +56,7 @@ class UpdateInfo:
     version: str
     notes: str  # описание релиза (Markdown)
     page_url: str
-    asset: Asset | None  # .dmg для текущей архитектуры; None — нет сборки
+    asset: Asset | None  # сборка для текущей системы; None — нет сборки
 
 
 # --- версии и выбор файла ---------------------------------------------------------------
@@ -75,15 +77,24 @@ def is_newer(candidate: str, current: str) -> bool:
 
 
 def machine_arch() -> str:
-    """arm64 или x86_64 — как в имени .dmg. Под Rosetta честно вернёт x86_64."""
+    """arm64 или x86_64 — как в имени .dmg (под Rosetta честно вернёт x86_64); x64 — Windows."""
+    if sys.platform == "win32":
+        return WINDOWS_ARCH
     return platform.machine() or "arm64"
+
+
+def asset_name(version: str, arch: str) -> str:
+    """Имя файла сборки в релизе."""
+    if arch == WINDOWS_ARCH:
+        return f"vedcalc-{version}-windows-{arch}-setup.exe"
+    return f"vedcalc-{version}-macos-{arch}.dmg"
 
 
 def parse_release(data: dict, arch: str, fetch: Callable[[str], bytes] | None = None) -> UpdateInfo:
     """Разбирает ответ GitHub API /releases/latest."""
     version = data["tag_name"].lstrip("v")
     assets = {a["name"]: a for a in data.get("assets", [])}
-    wanted = f"vedcalc-{version}-macos-{arch}.dmg"
+    wanted = asset_name(version, arch)
     asset = None
     if wanted in assets:
         raw = assets[wanted]
@@ -158,7 +169,7 @@ def _check_without_api(
     if not is_newer(tag, current):
         return None
     version = tag.lstrip("v")
-    name = f"vedcalc-{version}-macos-{arch}.dmg"
+    name = asset_name(version, arch)
     sums = parse_checksums(
         fetch(DOWNLOAD_URL.format(tag=tag, name=CHECKSUMS_ASSET)).decode("utf-8")
     )
@@ -246,6 +257,38 @@ def download(
         path.unlink(missing_ok=True)
         raise UpdateError("Контрольная сумма скачанного файла не совпала — файл повреждён")
     return path
+
+
+# --- установка (Windows) ----------------------------------------------------------------
+
+
+def windows_install_dir() -> Path | None:
+    """Папка установленной программы, если запущена собранная версия на Windows."""
+    if not getattr(sys, "frozen", False) or sys.platform != "win32":
+        return None
+    return Path(sys.executable).resolve().parent
+
+
+def windows_install_command(setup: Path, pid: int) -> list[str]:
+    """Дождаться выхода программы и тихо запустить установщик: он сам запустит новую версию."""
+    path = str(setup).replace("'", "''")
+    script = (
+        f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; "
+        f"Start-Process -FilePath '{path}' "
+        "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'"
+    )
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def launch_windows_installer(setup: Path, pid: int) -> None:
+    """Команда живёт отдельно от программы и без окна консоли."""
+    subprocess.Popen(
+        windows_install_command(setup, pid),
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 # --- установка (macOS) ------------------------------------------------------------------

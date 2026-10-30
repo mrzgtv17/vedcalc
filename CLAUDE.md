@@ -11,10 +11,10 @@
 - Работа поэтапно: сначала план с вопросами, реализация — после подтверждения.
 - `main` защищена: только через PR с зелёным CI (ruff + pytest на Ubuntu и macOS).
 - Выпуск: версия в `pyproject.toml` и `vedcalc/__init__.py`, раздел в `CHANGELOG.md`,
-  тег `vX.Y.Z` — сборка и GitHub Release делаются в CI. Сборка только для Apple Silicon (arm64).
+  тег `vX.Y.Z` — сборка и GitHub Release делаются в CI. Сборки: macOS Apple Silicon (arm64) и Windows x64.
 - Деньги — только `Decimal`; допущения методики — в `docs/ASSUMPTIONS.md`.
 
 ## Команды
 - Тесты: `.venv/bin/pytest`
 - Линтер: `.venv/bin/ruff check . && .venv/bin/ruff format --check .`
-- Сборка `.app`/`.dmg`: `scripts/build_macos.sh`
+- Сборка `.app`/`.dmg`: `scripts/build_macos.sh`; Windows: `scripts/build_windows.ps1`

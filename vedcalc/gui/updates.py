@@ -177,10 +177,13 @@ class UpdateController(QObject):
 
     def install_status(self, info: UpdateInfo) -> tuple[bool, str]:
         bundle = updater.current_app_bundle()
+        windows = updater.windows_install_dir()
         if info.asset is None:
-            return False, "Для вашего Mac нет готовой сборки в этом релизе."
+            return False, "Для вашего компьютера нет готовой сборки в этом релизе."
         if not info.asset.sha256:
             return False, "У релиза нет контрольной суммы — установите обновление вручную."
+        if windows is not None:
+            return True, ""
         if bundle is None:
             return False, "Программа запущена из исходников — обновите её через git pull."
         if not updater.can_install_in_place(bundle):
@@ -202,7 +205,8 @@ class UpdateController(QObject):
 
     def install(self, info: UpdateInfo) -> None:
         bundle = updater.current_app_bundle()
-        assert bundle is not None and info.asset is not None
+        windows = updater.windows_install_dir() is not None
+        assert (bundle is not None or windows) and info.asset is not None
         progress = QProgressDialog("Загрузка обновления…", "Отменить", 0, 100, self.window)
         progress.setWindowTitle("Обновление")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -225,13 +229,16 @@ class UpdateController(QObject):
         def work() -> None:
             try:
                 tmp = Path(tempfile.mkdtemp(prefix="vedcalc-download-"))
-                dmg = updater.download(
+                file = updater.download(
                     info.asset,
                     tmp,
                     lambda d, t: (signals.progress.emit(d, t), not cancelled["value"])[1],
                 )
-                staged = updater.stage_from_dmg(dmg, bundle, info.version)
-                dmg.unlink(missing_ok=True)
+                if windows:  # установщик запустится после выхода из программы
+                    signals.prepared.emit(file, None)
+                    return
+                staged = updater.stage_from_dmg(file, bundle, info.version)
+                file.unlink(missing_ok=True)
                 signals.prepared.emit(staged, None)
             except UpdateError as exc:
                 signals.prepared.emit(None, str(exc))
@@ -253,7 +260,7 @@ class UpdateController(QObject):
             return
         self._restart_into(bundle, result["staged"])
 
-    def _restart_into(self, bundle: Path, staged: Path) -> None:
+    def _restart_into(self, bundle: Path | None, staged: Path) -> None:
         answer = QMessageBox.question(
             self.window,
             "Обновление",
@@ -274,12 +281,18 @@ class UpdateController(QObject):
         if not self.window.close():
             _remove_tree(staged)
             return
-        script = updater.write_swap_script(bundle, staged, os.getpid())
-        updater.launch_detached(script)
+        if bundle is None:
+            updater.launch_windows_installer(staged, os.getpid())
+        else:
+            script = updater.write_swap_script(bundle, staged, os.getpid())
+            updater.launch_detached(script)
         QApplication.quit()
 
 
 def _remove_tree(path: Path) -> None:
     import shutil
 
-    shutil.rmtree(path, ignore_errors=True)
+    if path.is_file():  # установщик Windows
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path, ignore_errors=True)

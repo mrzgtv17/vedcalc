@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -17,7 +18,8 @@ from vedcalc.gui.prefs import app_settings
 from vedcalc.reports.style import DARK, LIGHT, Palette
 
 ASSETS = Path(__file__).parent / "assets"
-BASE_POINT_SIZE = 13
+# 13 пт на macOS — 13 px; на Windows (96 dpi) тот же размер даёт 10 пт
+BASE_POINT_SIZE = 10 if sys.platform == "win32" else 13
 
 SYSTEM, LIGHT_MODE, DARK_MODE = "system", "light", "dark"
 MODES = {SYSTEM: "Как в системе", LIGHT_MODE: "Светлая", DARK_MODE: "Тёмная"}
