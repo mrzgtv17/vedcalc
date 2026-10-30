@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
-VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "vedcalc" / "__init__.py").read_text())[1]
+VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "vedcalc" / "__init__.py").read_text("utf-8"))[1]
 
 a = Analysis(
     [str(ROOT / "scripts" / "launch.py")],

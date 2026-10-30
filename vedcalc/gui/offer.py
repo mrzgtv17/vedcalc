@@ -109,7 +109,7 @@ class ImagePicker(QWidget):
 
 
 class RequisitesDialog(QDialog):
-    """Реквизиты продавца — сохраняются на этом Mac и подставляются во все КП."""
+    """Реквизиты продавца — сохраняются на этом компьютере и подставляются во все КП."""
 
     def __init__(self, directory: Path | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -118,7 +118,7 @@ class RequisitesDialog(QDialog):
         self.directory = directory
         self.requisites = load_requisites(directory)
         v = QVBoxLayout(self)
-        note = QLabel("Реквизиты хранятся на этом Mac и подставляются во все КП.")
+        note = QLabel("Реквизиты хранятся на этом компьютере и подставляются во все КП.")
         note.setObjectName("muted")
         note.setWordWrap(True)
         v.addWidget(note)

@@ -35,7 +35,7 @@ NOT_SELECTED = "— не выбран —"
 
 
 class TokenDialog(QDialog):
-    """Ввод токена API WB: хранится в Связке ключей macOS, на экране — скрыт."""
+    """Ввод токена API WB: хранится в хранилище паролей системы, на экране — скрыт."""
 
     def __init__(self, store: TokenStore, parent: QWidget | None = None):
         super().__init__(parent)
@@ -45,7 +45,7 @@ class TokenDialog(QDialog):
         v = QVBoxLayout(self)
         info = QLabel(
             "Создайте токен в кабинете продавца: Настройки → Доступ к API → категория "
-            "<b>«Тарифы»</b>, режим «Только чтение». Токен хранится в Связке ключей этого Mac "
+            "<b>«Тарифы»</b>, режим «Только чтение». Токен хранится в хранилище паролей системы "
             "и отправляется только на common-api.wildberries.ru."
         )
         info.setWordWrap(True)

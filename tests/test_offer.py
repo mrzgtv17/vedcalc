@@ -293,3 +293,14 @@ def test_offer_from_main_window(qtbot, monkeypatch):
     w.pricing.offer_button.click()
     (offer,) = opened
     assert offer.total == D("244000.00") and offer.vat_total == D("44000.00")
+
+
+def test_data_folder_on_windows(monkeypatch, tmp_path):
+    import sys
+
+    from vedcalc.core.offer import DATA_DIR_ENV, requisites_dir
+
+    monkeypatch.delenv(DATA_DIR_ENV, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert requisites_dir() == tmp_path / "vedcalc"
